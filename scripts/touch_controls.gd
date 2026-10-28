@@ -46,7 +46,7 @@ func _input(event: InputEvent) -> void:
 
 
 func _on_touch_pressed(finger: int, pos: Vector2) -> void:
-	if pos.distance_to(_jump_center()) <= _jump_radius() * 1.3:
+	if _jump_finger == -1 and pos.distance_to(_jump_center()) <= _jump_radius() * 1.3:
 		_jump_finger = finger
 		Input.action_press("jump")
 	elif pos.x < size.x * 0.5:
