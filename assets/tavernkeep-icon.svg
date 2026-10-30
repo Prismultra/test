@@ -8,20 +8,12 @@
     <rect width="1024" height="1024" fill="url(#bg)"/>
     <circle cx="512" cy="512" r="462" fill="none" stroke="#f2a93b" stroke-opacity="0.35" stroke-width="10"/>
     
-    <g transform="translate(-40 -40)">
+    <g transform="translate(0 0)">
       <polygon points="512,182 797.7883832488648,347 797.7883832488648,677 512,842 226.21161675113524,677 226.21161675113524,347" fill="#000" opacity="0.35" transform="translate(14 22)" filter="url(#blur)"/>
       <polygon points="512.0,320.6 512.0,182.0 797.8,347.0" fill="#ffcf5c"/><polygon points="512.0,320.6 226.2,347.0 512.0,182.0" fill="#ffd977"/><polygon points="512.0,320.6 797.8,347.0 677.8,607.7" fill="#f2a93b"/><polygon points="346.2,607.7 226.2,347.0 512.0,320.6" fill="#f7b84a"/><polygon points="677.8,607.7 797.8,347.0 797.8,677.0" fill="#d98a24"/><polygon points="346.2,607.7 226.2,677.0 226.2,347.0" fill="#e0952c"/><polygon points="677.8,607.7 797.8,677.0 512.0,842.0" fill="#b86e17"/><polygon points="346.2,607.7 512.0,842.0 226.2,677.0" fill="#c27819"/><polygon points="677.8,607.7 512.0,842.0 346.2,607.7" fill="#a35f13"/><polygon points="512.0,320.6 677.8,607.7 346.2,607.7" fill="#ffe08a"/>
       <g stroke="#2a1405" stroke-width="12" stroke-linejoin="round" stroke-linecap="round" fill="none">
         <polygon points="512,182 797.7883832488648,347 797.7883832488648,677 512,842 226.21161675113524,677 226.21161675113524,347"/><line x1="512" y1="320.6" x2="677.7572622843416" y2="607.6999999999999"/><line x1="677.7572622843416" y1="607.6999999999999" x2="346.24273771565845" y2="607.6999999999999"/><line x1="346.24273771565845" y1="607.6999999999999" x2="512" y2="320.6"/><line x1="512" y1="320.6" x2="512" y2="182"/><line x1="512" y1="320.6" x2="797.7883832488648" y2="347"/><line x1="512" y1="320.6" x2="226.21161675113524" y2="347"/><line x1="677.7572622843416" y1="607.6999999999999" x2="797.7883832488648" y2="347"/><line x1="677.7572622843416" y1="607.6999999999999" x2="797.7883832488648" y2="677"/><line x1="677.7572622843416" y1="607.6999999999999" x2="512" y2="842"/><line x1="346.24273771565845" y1="607.6999999999999" x2="512" y2="842"/><line x1="346.24273771565845" y1="607.6999999999999" x2="226.21161675113524" y2="677"/><line x1="346.24273771565845" y1="607.6999999999999" x2="226.21161675113524" y2="347"/>
       </g>
       <text x="512" y="566" text-anchor="middle" font-family="DejaVu Serif, Georgia, serif" font-weight="bold" font-size="112" fill="#3a1b06">20</text>
-    </g>
-    <g transform="translate(572 562) scale(0.86)">
-      <rect x="0" y="40" width="230" height="270" rx="34" fill="#6b3a17" stroke="#2a1405" stroke-width="12"/>
-      <rect x="0" y="95" width="230" height="30" fill="#c9cdd3" stroke="#2a1405" stroke-width="8"/>
-      <rect x="0" y="235" width="230" height="30" fill="#c9cdd3" stroke="#2a1405" stroke-width="8"/>
-      <path d="M230 110 h40 a46 46 0 0 1 46 46 v58 a46 46 0 0 1 -46 46 h-40" fill="none" stroke="#2a1405" stroke-width="40" stroke-linecap="round"/>
-      <path d="M230 110 h40 a46 46 0 0 1 46 46 v58 a46 46 0 0 1 -46 46 h-40" fill="none" stroke="#8a4c1f" stroke-width="20" stroke-linecap="round"/>
-      <path d="M-14 60 q0 -50 46 -48 q14 -40 66 -30 q32 -34 80 -4 q50 -6 58 40 q30 12 14 46 z" fill="#fff4dc" stroke="#2a1405" stroke-width="12" stroke-linejoin="round"/>
     </g>
   </svg>
