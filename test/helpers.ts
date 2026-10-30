@@ -73,7 +73,14 @@ export function makeDeps(opts: { dm?: DmModel; rng?: Rng; store?: Deps["store"] 
   const pending: Promise<unknown>[] = [];
   const discord = new FakeDiscord();
   const deps: Deps = {
-    config: { discordPublicKey: "00".repeat(32), discordAppId: "app", dmModel: "claude-opus-5-5", dmEffort: "medium" },
+    config: {
+      discordPublicKey: "00".repeat(32),
+      discordAppId: "app",
+      dmModel: "claude-opus-5-5",
+      dmEffort: "medium",
+      groqModel: "llama-3.3-70b-versatile",
+      dmProvider: "auto",
+    },
     store: opts.store ?? new MemoryStore(),
     discord,
     waitUntil: (p) => void pending.push(p),

@@ -27,11 +27,18 @@ Start a campaign in a channel with `/dm start` (optionally give a premise, tone 
 - Actions sent while it's still writing are queued and handled together.
 - It keeps a running summary and notes so long campaigns stay consistent.
 
-The AI DM uses `claude-opus-5-5` by default (change with `DM_MODEL`). It's billed per use to your Anthropic API account — `/dm status` shows the tokens a campaign has used. Everything else works without it.
+Pick the AI that runs it (everything else works without either):
+
+| | Set | Notes |
+|---|---|---|
+| **Claude** (best) | `ANTHROPIC_API_KEY` from [platform.claude.com](https://platform.claude.com) | Billed per use to your Anthropic API account (separate from a Claude.ai plan). Uses `claude-opus-5-5`; set `DM_MODEL=claude-haiku-5-5` for a much cheaper DM. |
+| **Groq** (free) | `GROQ_API_KEY` from [console.groq.com](https://console.groq.com) | Free tier with daily and per-minute limits, so turns can be slow when busy, and open models follow the rules less reliably. Uses `llama-3.3-70b-versatile`; change with `GROQ_MODEL`. |
+
+If both keys are set, Claude is used (override with `DM_PROVIDER=groq`). `/dm status` shows which AI is running and the tokens a campaign has used.
 
 ## Setup (about 15 minutes, all in the browser)
 
-You need accounts on [Discord](https://discord.com/developers/applications), [GitHub](https://github.com), [Vercel](https://vercel.com) and [Supabase](https://supabase.com) (all free), plus an [Anthropic API key](https://platform.claude.com) if you want the AI DM.
+You need accounts on [Discord](https://discord.com/developers/applications), [GitHub](https://github.com), [Vercel](https://vercel.com) and [Supabase](https://supabase.com) (all free), plus an [Anthropic API key](https://platform.claude.com) or a free [Groq key](https://console.groq.com) if you want the AI DM.
 
 ### 1. Create the Discord application
 
@@ -58,7 +65,8 @@ You need accounts on [Discord](https://discord.com/developers/applications), [Gi
    | `REGISTER_KEY` | any long random password you make up |
    | `SUPABASE_URL` | from step 2 |
    | `SUPABASE_SERVICE_ROLE_KEY` | from step 2 |
-   | `ANTHROPIC_API_KEY` | optional — turns on the AI DM |
+   | `ANTHROPIC_API_KEY` | optional — turns on the AI DM with Claude |
+   | `GROQ_API_KEY` | optional — or turn it on for free with Groq |
 
 3. Deploy, and note your URL, e.g. `https://tavernkeep-yourname.vercel.app`.
 
@@ -78,7 +86,7 @@ Type `/help` in Discord. 🎉
 ```bash
 npm install
 cp .env.example .env   # fill it in (Supabase is optional locally; memory is used without it)
-npm test               # 56 tests: dice, rules, commands end to end, AI DM with a scripted model
+npm test               # dice, rules, commands end to end, AI DM with scripted Claude and Groq fakes
 npm run typecheck
 npm run dev            # local server on :3000 — expose it with a tunnel, e.g.
                        # cloudflared tunnel --url http://localhost:3000
@@ -92,7 +100,7 @@ Layout:
 - `src/app.ts` — signature check, routing, and automatic deferral for anything slower than ~2 seconds
 - `src/commands/` — one module per slash command
 - `src/game/` — dice engine, 5e rules tables, character and combat logic (no Discord code)
-- `src/ai/` — the Dungeon Master: prompt, tools, turn loop, campaign state and locking
+- `src/ai/` — the Dungeon Master: prompt, tools, turn loop, campaign state and locking; `groq.ts` adapts Groq's API to the same interface
 - `src/store/` — a tiny versioned key-value store (Supabase or in-memory) with compare-and-set updates
 
 ## Credits

@@ -24,5 +24,5 @@ createServer(async (req, res) => {
   res.end(Buffer.from(await response.arrayBuffer()));
 }).listen(port, () => {
   console.log(`Tavernkeep listening on http://localhost:${port}`);
-  console.log(`AI Dungeon Master: ${deps.dm ? `on (${deps.config.dmModel})` : "off (set ANTHROPIC_API_KEY)"}`);
+  console.log(`AI Dungeon Master: ${deps.dm ? `on — ${deps.dm.label ?? "custom model"}` : "off (set ANTHROPIC_API_KEY or GROQ_API_KEY)"}`);
 });

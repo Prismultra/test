@@ -31,7 +31,7 @@ export const helpCommand: CommandModule = {
               name: "🐉 AI Dungeon Master",
               value: aiOn
                 ? "`/dm start` to begin a campaign in this channel, `/dm join` to bring your character, then `/act` to play.\nWhen the DM asks for a roll, click the button. `/dm ask` for out-of-character questions."
-                : "_Not enabled on this server. The bot owner can turn it on by adding an Anthropic API key._",
+                : "_Not enabled on this server. The bot owner can turn it on with an Anthropic API key, or a free Groq key._",
             },
           ],
           footer: SRD_ATTRIBUTION,

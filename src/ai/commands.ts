@@ -305,7 +305,7 @@ async function status(ctx: Ctx): Promise<Reply> {
         description: c.premise ? `_${truncate(c.premise, 500)}_` : undefined,
         fields,
         color: COLORS.narration,
-        footer: `${c.turns} DM turns · ${k(c.usage.inputTokens)} input / ${k(c.usage.outputTokens)} output tokens used`,
+        footer: `${c.turns} DM turns · ${k(c.usage.inputTokens)} input / ${k(c.usage.outputTokens)} output tokens used · AI: ${ctx.deps.dm?.label ?? "off"}`,
       }),
     ],
   };

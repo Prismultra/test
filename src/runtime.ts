@@ -3,7 +3,19 @@ import type { Deps } from "./discord/context.js";
 import { DiscordRest } from "./discord/api.js";
 import { MemoryStore } from "./store/memory.js";
 import { SupabaseStore } from "./store/supabase.js";
-import { AnthropicDmModel } from "./ai/model.js";
+import { AnthropicDmModel, type DmModel } from "./ai/model.js";
+import { GroqDmModel } from "./ai/groq.js";
+
+/** Picks the Dungeon Master's AI: Claude if configured, else Groq's free tier, else none. */
+export function createDmModel(config: Config): DmModel | undefined {
+  const anthropic = () => new AnthropicDmModel(config.anthropicApiKey!, config.dmModel, config.dmEffort);
+  const groq = () => new GroqDmModel(config.groqApiKey!, config.groqModel);
+  if (config.dmProvider === "anthropic") return config.anthropicApiKey ? anthropic() : undefined;
+  if (config.dmProvider === "groq") return config.groqApiKey ? groq() : undefined;
+  if (config.anthropicApiKey) return anthropic();
+  if (config.groqApiKey) return groq();
+  return undefined;
+}
 
 export function createDeps(config: Config, waitUntil: Deps["waitUntil"]): Deps {
   let store: Deps["store"];
@@ -16,6 +28,7 @@ export function createDeps(config: Config, waitUntil: Deps["waitUntil"]): Deps {
     store = new MemoryStore();
   }
   const deps: Deps = { config, store, discord: new DiscordRest(config.discordAppId), waitUntil };
-  if (config.anthropicApiKey) deps.dm = new AnthropicDmModel(config.anthropicApiKey, config.dmModel, config.dmEffort);
+  const dm = createDmModel(config);
+  if (dm) deps.dm = dm;
   return deps;
 }
