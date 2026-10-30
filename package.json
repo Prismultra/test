@@ -1,0 +1,33 @@
+{
+  "name": "tavernkeep",
+  "version": "1.0.0",
+  "description": "A Discord bot for 5e tabletop games: dice, character sheets, combat tracker, SRD lookups and an optional AI Dungeon Master.",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build:srd": "tsx scripts/build-srd.ts",
+    "register": "tsx scripts/register-commands.ts",
+    "dev": "tsx scripts/dev-server.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
+    "@supabase/supabase-js": "^2.118.0",
+    "@vercel/functions": "^3.10.5",
+    "discord-api-types": "^0.38.57"
+  },
+  "overrides": {
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5"
+  }
+}

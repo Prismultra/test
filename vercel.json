@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/interactions.ts": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [{ "source": "/", "destination": "/api/interactions" }]
+}
