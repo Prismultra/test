@@ -206,7 +206,8 @@ export function applyDamage(c: Character, amount: number, opts: { critical?: boo
   if (rest === 0) return out;
 
   if (c.hp === 0) {
-    // Damage while at 0 HP causes death save failures (2 on a crit).
+    // Damage while at 0 HP causes death save failures (2 on a crit), and a stable creature starts dying again.
+    removeCondition(c, "Stable");
     if (rest >= c.maxHp) out.instantDeath = true;
     out.deathSaveFailures = opts.critical ? 2 : 1;
     c.deathSaves.failures = Math.min(3, c.deathSaves.failures + out.deathSaveFailures);
@@ -229,6 +230,7 @@ export function heal(c: Character, amount: number): number {
   if (before === 0 && c.hp > 0) {
     c.deathSaves = { successes: 0, failures: 0 };
     removeCondition(c, "Unconscious");
+    removeCondition(c, "Stable");
   }
   return c.hp - before;
 }
@@ -254,6 +256,9 @@ export interface DeathSaveOutcome {
   result: "success" | "failure" | "stable" | "dead" | "revived";
 }
 
+export const isDead = (c: Character) => c.hp === 0 && c.deathSaves.failures >= 3;
+export const isStable = (c: Character) => c.hp === 0 && c.conditions.some((x) => x.toLowerCase() === "stable");
+
 export function rollDeathSave(c: Character, rng?: Rng): DeathSaveOutcome {
   const r = roll("1d20", rng ? { rng } : {});
   const nat = r.natural ?? r.total;
@@ -261,6 +266,7 @@ export function rollDeathSave(c: Character, rng?: Rng): DeathSaveOutcome {
     c.hp = 1;
     c.deathSaves = { successes: 0, failures: 0 };
     removeCondition(c, "Unconscious");
+    removeCondition(c, "Stable");
     return { roll: r, result: "revived" };
   }
   if (nat >= 10) c.deathSaves.successes++;
@@ -326,6 +332,8 @@ export function setLevel(c: Character, level: number) {
   if (c.classKey === "warlock") {
     const p = pactSlots(newLevel);
     c.pact = { max: p.count, used: Math.min(c.pact?.used ?? 0, p.count), level: p.level };
+  } else if (c.classKey) {
+    delete c.pact;
   }
 }
 

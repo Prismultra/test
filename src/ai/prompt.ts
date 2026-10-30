@@ -66,20 +66,24 @@ export interface PartySheet {
   character: Character;
 }
 
-export type TurnTrigger =
-  | { kind: "start" }
-  | { kind: "actions"; actions: QueuedAction[] }
-  | { kind: "rolls"; rolls: PendingRoll[] };
+/** What prompted a DM turn. Roll results made since the last turn are always included too. */
+export type TurnTrigger = { kind: "start" } | { kind: "turn"; actions: QueuedAction[] };
 
-export function describeTrigger(t: TurnTrigger): string {
+export function describeNew(t: TurnTrigger, rolled: PendingRoll[], unrolled: PendingRoll[]): string {
   if (t.kind === "start") {
     return "The adventure begins now. Open with the scene and the hook (invent one that fits if there's no premise), introduce the party in it, give the adventure a title with update_story, and end by asking the party what they do.";
   }
-  if (t.kind === "rolls") {
-    return `Roll results:\n${t.rolls.map((r) => `- ${r.result?.text ?? `${r.characterName}: ${r.label} (not rolled)`}`).join("\n")}\n\nNarrate what happens.`;
+  const parts: string[] = [];
+  if (rolled.length) parts.push(`Roll results:\n${rolled.map((r) => `- ${r.result!.text}`).join("\n")}`);
+  if (unrolled.length) {
+    parts.push(
+      `Rolls you asked for that weren't made before the players moved on (treat them as not attempted, or ask again):\n${unrolled.map((r) => `- ${r.characterName}: ${r.label}`).join("\n")}`,
+    );
   }
-  const lines = t.actions.map((a) => (a.isRollResult ? `- ${a.text}` : `- ${a.userName} as ${a.characterName}: ${a.text}`));
-  return `Player actions and roll results, in order:\n${lines.join("\n")}`;
+  const actions = t.actions.filter((a) => !a.wake);
+  if (actions.length) parts.push(`Player actions, in order:\n${actions.map((a) => `- ${a.userName} as ${a.characterName}: ${a.text}`).join("\n")}`);
+  if (!actions.length && rolled.length) parts.push("Narrate what happens.");
+  return parts.join("\n\n");
 }
 
 export function buildTurnMessage(opts: {
@@ -87,6 +91,10 @@ export function buildTurnMessage(opts: {
   party: PartySheet[];
   combat?: Combat | undefined;
   trigger: TurnTrigger;
+  rolled?: PendingRoll[];
+  unrolled?: PendingRoll[];
+  /** Only include this many of the most recent transcript entries (for small context budgets). */
+  transcriptLimit?: number;
 }): string {
   const { campaign: c, party, combat } = opts;
   const sections: string[] = [];
@@ -116,9 +124,11 @@ export function buildTurnMessage(opts: {
       `<combat>\nRound ${combat.round}. ${who ? `It is ${who.name}'s turn.` : ""}\n${renderOrder(combat, { revealHp: true })}\n</combat>`,
     );
   }
-  const recent = c.transcript.map(transcriptLine).join("\n\n");
+  const entries = opts.transcriptLimit !== undefined ? c.transcript.slice(-opts.transcriptLimit) : c.transcript;
+  const recent = entries.map(transcriptLine).join("\n\n");
   if (recent) sections.push(`<recent_transcript>\n${recent}\n</recent_transcript>`);
-  sections.push(`<new>\n${describeTrigger(opts.trigger)}\n</new>`);
+  const fresh = describeNew(opts.trigger, opts.rolled ?? [], opts.unrolled ?? []);
+  if (fresh) sections.push(`<new>\n${fresh}\n</new>`);
   return sections.join("\n\n");
 }
 

@@ -30,7 +30,8 @@ export class DiscordRest implements DiscordApi {
     }
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`Discord ${method} ${path.split("/").slice(0, 4).join("/")} failed: ${res.status} ${text.slice(0, 300)}`);
+      // Only the start of the path is logged: webhook paths contain the interaction token.
+      throw new Error(`Discord ${method} ${path.split("/").slice(0, 3).join("/")} failed: ${res.status} ${text.slice(0, 300)}`);
     }
   }
 

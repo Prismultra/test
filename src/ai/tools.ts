@@ -13,6 +13,7 @@ import {
   type Coins,
 } from "../game/character.js";
 import {
+  MAX_COMBATANTS,
   addCombatant,
   addMonsters,
   createCombat,
@@ -239,11 +240,19 @@ export class ToolError extends Error {}
 
 function findPartyMember(ctx: ToolContext, name: string | undefined): PartySheet {
   if (!name) throw new ToolError("Missing character name.");
+  const raw = name.trim().toLowerCase();
   const q = normalize(name);
+  const norm = (x: string) => normalize(x);
   const hit =
-    ctx.party.find((p) => normalize(p.character.name) === q) ??
-    ctx.party.find((p) => normalize(p.character.name).startsWith(q) || q.startsWith(normalize(p.character.name))) ??
-    ctx.party.find((p) => normalize(p.playerName) === q);
+    ctx.party.find((p) => p.character.name.trim().toLowerCase() === raw) ??
+    (q
+      ? (ctx.party.find((p) => norm(p.character.name) === q) ??
+        ctx.party.find((p) => {
+          const n = norm(p.character.name);
+          return n !== "" && (n.startsWith(q) || q.startsWith(n));
+        }) ??
+        ctx.party.find((p) => norm(p.playerName) === q))
+      : undefined);
   if (!hit) {
     throw new ToolError(`No party member called "${name}". Party: ${ctx.party.map((p) => p.character.name).join(", ") || "(empty)"}.`);
   }
@@ -359,6 +368,7 @@ async function updateCharacter(ctx: ToolContext, input: Input): Promise<string> 
     ctx.store,
     member.character,
     (c) => {
+      changes.length = 0; // The edit may be retried after a conflict.
       const hp = int(input, "hp_change");
       if (hp !== undefined && hp < 0) {
         const out = applyDamage(c, -hp, { critical: bool(input, "critical") ?? false });
@@ -480,6 +490,12 @@ async function startCombat(ctx: ToolContext, input: Input): Promise<string> {
     ctx.store,
     channelId,
     (cb) => {
+      unknown.length = 0; // The edit may be retried after a conflict.
+      const room = MAX_COMBATANTS - cb.combatants.length;
+      const wanted =
+        ctx.party.filter((p) => !cb.combatants.some((x) => x.characterId === p.character.id)).length +
+        enemies.reduce((n, e) => n + Math.min(10, Math.max(1, int(e, "count") ?? 1)), 0);
+      if (wanted > room) throw new ToolError(`That's too many combatants (max ${MAX_COMBATANTS}). Use fewer enemies.`);
       for (const p of ctx.party) {
         const c = p.character;
         if (cb.combatants.some((x) => x.characterId === c.id)) continue;
@@ -545,22 +561,43 @@ const plainOrder = (combat: Parameters<typeof renderOrder>[0]) =>
 
 async function updateCombatant(ctx: ToolContext, input: Input): Promise<string> {
   const name = str(input, "name") ?? "";
+  const dmg = int(input, "damage");
+  const healing = int(input, "heal");
+  const before = await getCombat(ctx.store, ctx.campaign.channelId);
+  if (!before) throw new ToolError("There's no combat running. Use start_combat first.");
+  const found = findCombatant(before, name);
+  if (!found) throw new ToolError(`No combatant "${name}". Order:\n${plainOrder(before)}`);
+
+  // Player characters: change the sheet (temp HP, death saves) and mirror it onto the tracker.
+  const member = found.characterId ? ctx.party.find((p) => p.character.id === found.characterId) : undefined;
+  if (member && (dmg || healing)) {
+    const { char } = await editCharacter(
+      ctx.store,
+      member.character,
+      (c) => {
+        if (dmg) applyDamage(c, dmg);
+        if (healing) heal(c, healing);
+      },
+      ctx.now,
+    );
+    member.character = char;
+    await syncCharacterToCombat(ctx.store, ctx.campaign.channelId, char);
+  }
+
   const { combat, result } = await editCombat(
     ctx.store,
     ctx.campaign.channelId,
     (cb) => {
-      const t = findCombatant(cb, name);
-      if (!t) throw new ToolError(`No combatant "${name}". Order:\n${plainOrder(cb)}`);
+      const t = cb.combatants.find((x) => x.id === found.id);
+      if (!t) throw new ToolError(`${found.name} is no longer in the fight.`);
       const notes: string[] = [];
-      const dmg = int(input, "damage");
       if (dmg) {
-        damageCombatant(t, dmg);
+        if (!member) damageCombatant(t, dmg);
         notes.push(`took ${dmg} damage`);
       }
-      const h = int(input, "heal");
-      if (h) {
-        healCombatant(t, h);
-        notes.push(`healed ${h}`);
+      if (healing) {
+        if (!member) healCombatant(t, healing);
+        notes.push(`healed ${healing}`);
       }
       const add = str(input, "add_condition");
       if (add) {
@@ -575,8 +612,7 @@ async function updateCombatant(ctx: ToolContext, input: Input): Promise<string> 
       if (bool(input, "remove")) {
         removeCombatant(cb, t.id);
         notes.push("removed from combat");
-      }
-      if (isDown(t) && !bool(input, "remove")) notes.push("is down");
+      } else if (isDown(t)) notes.push("is down");
       pushLog(cb, `${t.name} ${notes.join(", ")}.`);
       return { t, notes };
     },
@@ -584,24 +620,6 @@ async function updateCombatant(ctx: ToolContext, input: Input): Promise<string> 
   );
   ctx.combatChanged = true;
   const { t, notes } = result;
-  // Keep player sheets in sync when the DM damages a player combatant directly.
-  if (t.characterId && t.ownerId && (int(input, "damage") || int(input, "heal"))) {
-    const member = ctx.party.find((p) => p.character.id === t.characterId);
-    if (member) {
-      const { char } = await editCharacter(
-        ctx.store,
-        member.character,
-        (c) => {
-          const d = int(input, "damage");
-          if (d) applyDamage(c, d);
-          const h = int(input, "heal");
-          if (h) heal(c, h);
-        },
-        ctx.now,
-      );
-      member.character = char;
-    }
-  }
   if (notes.length) ctx.dmRolls.push(`📝 **${t.name}** ${notes.join(", ")}.`);
   return `${t.name}: ${notes.join(", ") || "no change"}${t.hp !== undefined ? ` (HP ${t.hp}/${t.maxHp})` : ""}.\nOrder:\n${plainOrder(combat)}`;
 }

@@ -19,17 +19,24 @@ export interface ModelRequest {
 /** The one call the Dungeon Master makes. Tests substitute a scripted fake. */
 export interface DmModel {
   create(req: ModelRequest): Promise<BetaMessage>;
+  /** Send less context per call (for providers with tight token-per-minute limits). */
+  lean?: boolean;
+  /** Shown in /dm status. */
+  label?: string;
 }
 
 export class AnthropicDmModel implements DmModel {
   private client: Anthropic;
+  readonly label: string;
 
   constructor(
     apiKey: string,
     private model: string,
     private effort: Config["dmEffort"],
   ) {
-    this.client = new Anthropic({ apiKey, maxRetries: 2, timeout: 120_000 });
+    // Kept well inside the function's 300s limit: at most 2 attempts of 90s each.
+    this.client = new Anthropic({ apiKey, maxRetries: 1, timeout: 90_000 });
+    this.label = `Claude (${model})`;
   }
 
   create(req: ModelRequest): Promise<BetaMessage> {

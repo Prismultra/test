@@ -107,7 +107,8 @@ export function addMonsters(
   opts: { rollHp?: boolean; rng?: Rng; name?: string } = {},
 ): Combatant[] {
   const added: Combatant[] = [];
-  const n = Math.max(1, Math.min(count, MAX_COMBATANTS - c.combatants.length));
+  const n = Math.min(Math.max(1, count), MAX_COMBATANTS - c.combatants.length);
+  if (n <= 0) throw new Error(`A combat can have at most ${MAX_COMBATANTS} combatants.`);
   const base = opts.name?.trim() || monster.name;
   for (let i = 0; i < n; i++) {
     let hp = monster.hp;

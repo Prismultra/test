@@ -39,6 +39,8 @@ export const MAX_STEPS = 14;
 /** Transcript entries kept verbatim; older ones get folded into the summary. */
 export const KEEP_TRANSCRIPT = 14;
 export const COMPACT_AT = 34;
+/** Transcript entries sent each turn to models with small rate limits. */
+export const LEAN_TRANSCRIPT = 6;
 
 const SYSTEM: BetaTextBlockParam[] = [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }];
 
@@ -59,29 +61,64 @@ const textOf = (m: BetaMessage) =>
     .join("\n\n")
     .trim();
 
-function addUsage(c: Campaign, m: BetaMessage) {
-  c.usage.calls++;
-  c.usage.inputTokens += m.usage.input_tokens + (m.usage.cache_creation_input_tokens ?? 0) + (m.usage.cache_read_input_tokens ?? 0);
-  c.usage.outputTokens += m.usage.output_tokens;
-  c.usage.cacheReadTokens += m.usage.cache_read_input_tokens ?? 0;
+type Usage = Campaign["usage"];
+
+const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, calls: 0 });
+
+function addUsage(u: Usage, m: BetaMessage) {
+  u.calls++;
+  u.inputTokens += m.usage.input_tokens + (m.usage.cache_creation_input_tokens ?? 0) + (m.usage.cache_read_input_tokens ?? 0);
+  u.outputTokens += m.usage.output_tokens;
+  u.cacheReadTokens += m.usage.cache_read_input_tokens ?? 0;
 }
 
-function triggerEntries(trigger: TurnTrigger, at: string): TranscriptEntry[] {
-  if (trigger.kind === "start") return [{ id: newId(), kind: "event", text: "The adventure began.", at }];
-  if (trigger.kind === "rolls") {
-    return trigger.rolls.map((r) => ({ id: newId(), kind: "roll", text: r.result?.text ?? `${r.characterName}: ${r.label} (not rolled)`, at }));
+function mergeUsage(into: Usage, delta: Usage) {
+  into.calls += delta.calls;
+  into.inputTokens += delta.inputTokens;
+  into.outputTokens += delta.outputTokens;
+  into.cacheReadTokens += delta.cacheReadTokens;
+}
+
+/** Thrown when the campaign a turn was for has been ended (and maybe replaced) mid-turn. */
+export class CampaignChangedError extends UserError {
+  constructor() {
+    super("The campaign changed while the DM was thinking, so that turn was dropped.");
   }
-  return trigger.actions.map((a): TranscriptEntry =>
-    a.isRollResult
-      ? { id: newId(), kind: "roll", text: a.text, at }
-      : { id: newId(), kind: "player", author: `${a.userName} as ${a.characterName}`, text: a.text, at },
-  );
 }
 
-/** Runs one Dungeon Master turn: the model narrates and uses tools, then the campaign is saved. */
-export async function runDmTurn(deps: DmDeps, channelId: string, trigger: TurnTrigger): Promise<TurnResult> {
+/** How long one turn may keep calling tools before it wraps up (Vercel stops functions at 300s). */
+export const TURN_BUDGET_MS = 150_000;
+
+function triggerEntries(trigger: TurnTrigger, rolled: PendingRoll[], at: string): TranscriptEntry[] {
+  const entries: TranscriptEntry[] = rolled.map((r) => ({ id: newId(), kind: "roll", text: r.result!.text, at }));
+  if (trigger.kind === "start") entries.push({ id: newId(), kind: "event", text: "The adventure began.", at });
+  else {
+    for (const a of trigger.actions) {
+      if (!a.wake) entries.push({ id: newId(), kind: "player", author: `${a.userName} as ${a.characterName}`, text: a.text, at });
+    }
+  }
+  return entries;
+}
+
+/**
+ * Runs one Dungeon Master turn: the model narrates and uses tools, then the
+ * campaign is saved. Roll results made since the last turn are included
+ * automatically. Returns undefined when there's nothing new to respond to.
+ */
+export async function runDmTurn(
+  deps: DmDeps,
+  channelId: string,
+  trigger: TurnTrigger,
+  expectedCampaignId?: string,
+): Promise<TurnResult | undefined> {
+  const started = Date.now();
   const now = deps.now();
   const campaign = await requireCampaign(deps.store, channelId);
+  if (expectedCampaignId && campaign.id !== expectedCampaignId) throw new CampaignChangedError();
+  const rolled = campaign.pendingRolls.filter((r) => r.result);
+  const unrolled = campaign.pendingRolls.filter((r) => !r.result);
+  if (trigger.kind === "turn" && !rolled.length && trigger.actions.every((a) => a.wake)) return undefined;
+
   const party = await loadParty(deps.store, campaign);
   const combat = await getCombat(deps.store, channelId);
   const working = structuredClone(campaign);
@@ -96,17 +133,27 @@ export async function runDmTurn(deps: DmDeps, channelId: string, trigger: TurnTr
     combatChanged: false,
   };
   if (deps.rng) ctx.rng = deps.rng;
+  const usage = emptyUsage();
 
   // Each turn is a fresh conversation built from the saved state, so nothing from
   // earlier turns (including thinking blocks) is replayed. Within the turn the
   // history is append-only.
-  const messages: BetaMessageParam[] = [{ role: "user", content: buildTurnMessage({ campaign, party, combat, trigger }) }];
+  const content = buildTurnMessage({
+    campaign,
+    party,
+    combat,
+    trigger,
+    rolled,
+    unrolled,
+    ...(deps.model.lean ? { transcriptLimit: LEAN_TRANSCRIPT } : {}),
+  });
+  const messages: BetaMessageParam[] = [{ role: "user", content }];
   const texts: string[] = [];
   let refused = false;
 
   for (let step = 0; step < MAX_STEPS; step++) {
     const res = await deps.model.create({ system: SYSTEM, tools: DM_TOOLS, messages });
-    addUsage(working, res);
+    addUsage(usage, res);
     if (res.stop_reason === "refusal") {
       refused = true;
       break;
@@ -133,6 +180,7 @@ export async function runDmTurn(deps: DmDeps, channelId: string, trigger: TurnTr
       }
     }
     messages.push({ role: "user", content: results });
+    if (Date.now() - started > TURN_BUDGET_MS) break;
   }
 
   let narration = texts.join("\n\n").trim();
@@ -143,11 +191,14 @@ export async function runDmTurn(deps: DmDeps, channelId: string, trigger: TurnTr
   }
 
   const at = now.toISOString();
-  const entries = [...triggerEntries(trigger, at), { id: newId(), kind: "dm" as const, text: narration, at }];
+  const entries = [...triggerEntries(trigger, rolled, at), { id: newId(), kind: "dm" as const, text: narration, at }];
+  // Only results this turn actually narrated are used up.
+  const consumed = new Set(rolled.map((r) => r.id));
   const { campaign: saved } = await editCampaign(
     deps.store,
     channelId,
     (c) => {
+      if (c.id !== campaign.id) throw new CampaignChangedError();
       c.transcript.push(...entries);
       c.turns++;
       for (const k of ["title", "scene", "quest"] as const) {
@@ -155,9 +206,10 @@ export async function runDmTurn(deps: DmDeps, channelId: string, trigger: TurnTr
         if (v !== undefined) c[k] = v;
       }
       c.notes = working.notes;
-      // Roll requests from earlier turns expire; the DM re-asks if they still matter.
-      c.pendingRolls = ctx.requestedRolls;
-      c.usage = working.usage;
+      // Rolls this turn saw are used up (unrolled ones expire; the DM re-asks if
+      // they still matter). Rolls made while it was thinking carry to the next turn.
+      c.pendingRolls = [...c.pendingRolls.filter((r) => r.result && !consumed.has(r.id)), ...ctx.requestedRolls];
+      mergeUsage(c.usage, usage);
     },
     now,
   );
@@ -291,7 +343,7 @@ export async function compactIfNeeded(deps: DmDeps, channelId: string): Promise<
     deps.store,
     channelId,
     (cur) => {
-      addUsage(cur, res);
+      addUsage(cur.usage, res);
       if (!cur.transcript.slice(0, old.length).every((e) => ids.has(e.id))) return;
       cur.transcript = cur.transcript.filter((e) => !ids.has(e.id));
       cur.summary = summary;
@@ -306,17 +358,20 @@ export async function askDm(deps: DmDeps, channelId: string, question: string): 
   const campaign = await requireCampaign(deps.store, channelId);
   const party = await loadParty(deps.store, campaign);
   const combat = await getCombat(deps.store, channelId);
-  const context = buildTurnMessage({ campaign, party, combat, trigger: { kind: "actions", actions: [] } }).replace(
-    /<new>[\s\S]*<\/new>/,
-    "",
-  );
+  const context = buildTurnMessage({
+    campaign,
+    party,
+    combat,
+    trigger: { kind: "turn", actions: [] },
+    ...(deps.model.lean ? { transcriptLimit: LEAN_TRANSCRIPT } : {}),
+  });
   const res = await deps.model.create({
     system: [{ type: "text", text: ASK_SYSTEM }],
     messages: [{ role: "user", content: `${context.trim()}\n\n<question>\n${question}\n</question>` }],
     maxTokens: 4000,
     effort: "low",
   });
-  await editCampaign(deps.store, channelId, (c) => addUsage(c, res), deps.now()).catch(() => undefined);
+  await editCampaign(deps.store, channelId, (c) => addUsage(c.usage, res), deps.now()).catch(() => undefined);
   if (res.stop_reason === "refusal") return "I can't help with that one — try asking another way.";
   return textOf(res) || "Hmm, I'm not sure. Try asking another way.";
 }

@@ -170,23 +170,27 @@ function respond(reply: Reply, kind: Kind): APIInteractionResponse {
 async function deliver(ctx: Ctx, reply: Reply, kind: Kind, deferredEphemeral: boolean) {
   const { discord } = ctx.deps;
   const data = toMessageData(reply);
-  if (kind === "component") {
-    if (reply.update) {
+  try {
+    if (kind === "component") {
+      if (reply.update) {
+        delete data.flags;
+        await discord.editOriginal(ctx.token, data);
+      } else {
+        await discord.followup(ctx.token, data);
+      }
+    } else if (reply.ephemeral && !deferredEphemeral) {
+      // The "thinking..." message was public; replace it with a private one.
+      await discord.deleteOriginal(ctx.token).catch(() => undefined);
+      await discord.followup(ctx.token, data);
+    } else {
       delete data.flags;
       await discord.editOriginal(ctx.token, data);
-    } else {
-      await discord.followup(ctx.token, data);
     }
-  } else if (reply.ephemeral && !deferredEphemeral) {
-    // The "thinking..." message was public; replace it with a private one.
-    await discord.deleteOriginal(ctx.token).catch(() => undefined);
-    await discord.followup(ctx.token, data);
-  } else {
-    delete data.flags;
-    await discord.editOriginal(ctx.token, data);
+    if (reply.followups?.length) await sendFollowups(ctx, reply.followups);
+  } finally {
+    // Cleanup such as releasing locks must run even if Discord rejected the message.
+    await reply.after?.();
   }
-  if (reply.followups?.length) await sendFollowups(ctx, reply.followups);
-  await reply.after?.();
 }
 
 async function sendFollowups(ctx: Ctx, followups: Reply[]) {

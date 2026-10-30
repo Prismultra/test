@@ -21,8 +21,12 @@ export const spellCommand: CommandModule = {
         const level = ctx.requireInteger("level");
         const name = ctx.string("name");
         const srd = name ? findSpell(name) : undefined;
-        if (srd && srd.level > level && level > 0) {
-          throw new UserError(`${srd.name} needs at least a ${ordinal(srd.level)}-level slot.`);
+        if (srd && srd.level > level) {
+          throw new UserError(
+            level === 0
+              ? `${srd.name} is a ${ordinal(srd.level)}-level spell, so it needs a spell slot. Pick a level.`
+              : `${srd.name} needs at least a ${ordinal(srd.level)}-level slot.`,
+          );
         }
         const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
         const spellName = srd?.name ?? name ?? "a spell";

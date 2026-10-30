@@ -55,7 +55,13 @@ const FIELDS: Record<string, { label: string; apply: (c: Character, value: strin
       if (info) {
         c.classKey = v.trim().toLowerCase();
         c.saveProfs = [...info.saves];
-      } else delete c.classKey;
+      } else {
+        // Homebrew classes don't get SRD spellcasting; clear what the old class had.
+        delete c.classKey;
+        c.spellSlotsMax = Array(9).fill(0);
+        c.spellSlotsUsed = Array(9).fill(0);
+        delete c.pact;
+      }
       setLevel(c, c.level);
       return `Class is now **${c.className}**.`;
     },
@@ -115,13 +121,26 @@ const FIELDS: Record<string, { label: string; apply: (c: Character, value: strin
   portrait: {
     label: "Portrait image URL",
     apply: (c, v) => {
-      if (!/^https:\/\/\S+$/i.test(v.trim())) throw new UserError("Portrait must be an https:// image link.");
-      c.portraitUrl = v.trim();
+      c.portraitUrl = imageUrl(v);
       return "Portrait updated.";
     },
   },
   condition: { label: "Add a condition", apply: (c, v) => (addCondition(c, v), `Added **${v}**.`) },
 };
+
+/** Validates an image link strictly enough that Discord will accept it as an embed thumbnail. */
+function imageUrl(v: string): string {
+  let url: URL;
+  try {
+    url = new URL(v.trim());
+  } catch {
+    throw new UserError("Portrait must be an https:// image link.");
+  }
+  if (url.protocol !== "https:" || !url.hostname.includes(".") || url.username || url.password || url.href.length > 1000) {
+    throw new UserError("Portrait must be an https:// image link.");
+  }
+  return url.href;
+}
 
 function intValue(v: string, min: number, max: number): number {
   const n = Number(v.trim());
@@ -218,7 +237,7 @@ async function use(ctx: Ctx): Promise<Reply> {
 
 async function set(ctx: Ctx): Promise<Reply> {
   const field = ctx.requireString("field").toLowerCase().replace(/\s+/g, "");
-  const def = FIELDS[field];
+  const def = Object.hasOwn(FIELDS, field) ? FIELDS[field] : undefined;
   if (!def) throw new UserError(`Unknown field "${field}". Pick one from the list.`);
   const value = ctx.requireString("value");
   const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
@@ -358,7 +377,7 @@ export async function characterNameChoices(ctx: Ctx, query: string): Promise<Cho
   return chars
     .filter((c) => c.name.toLowerCase().includes(q))
     .slice(0, 25)
-    .map((c) => choice(`${c.name} (level ${c.level} ${c.className})`, c.name));
+    .map((c) => choice(`${c.name} (level ${c.level} ${c.className})`, c.id));
 }
 
 export const charCommand: CommandModule = {

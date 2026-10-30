@@ -1,6 +1,7 @@
 import { ButtonStyle } from "discord-api-types/v10";
 import { applyDamage, heal, initiativeMod } from "../game/character.js";
 import {
+  MAX_COMBATANTS,
   addCombatant,
   addMonsters,
   createCombat,
@@ -23,7 +24,7 @@ import { keys } from "../store/store.js";
 import { COLORS, UserError, button, embed, row, type Reply } from "../discord/ui.js";
 import type { Ctx } from "../discord/context.js";
 import { editCharacter, requireActive } from "./characters.js";
-import { editCombat, getCombat } from "./combat-store.js";
+import { editCombat, getCombat, syncCharacterToCombat } from "./combat-store.js";
 import { choice, type CommandModule, type ComponentModule } from "./registry.js";
 import { parseMode } from "./roll.js";
 
@@ -60,6 +61,12 @@ export function trackerReply(combat: Combat, opts: { revealHp?: boolean; ephemer
   return reply;
 }
 
+function ensureRoom(cb: Combat, adding: number) {
+  if (cb.combatants.length + adding > MAX_COMBATANTS) {
+    throw new UserError(`A combat can have at most ${MAX_COMBATANTS} combatants (there are ${cb.combatants.length}).`);
+  }
+}
+
 async function start(ctx: Ctx): Promise<Reply> {
   const existing = await getCombat(ctx.store, ctx.channelId);
   if (existing) {
@@ -88,6 +95,7 @@ async function join(ctx: Ctx): Promise<Reply> {
     (cb) => {
       const existing = cb.combatants.find((x) => x.characterId === c.id);
       if (existing) removeCombatant(cb, existing.id);
+      else ensureRoom(cb, 1);
       const x = addCombatant(cb, {
         name: c.name,
         initBonus: bonus,
@@ -121,6 +129,7 @@ async function add(ctx: Ctx): Promise<Reply> {
     ctx.store,
     ctx.channelId,
     (cb) => {
+      ensureRoom(cb, count);
       const added: Combatant[] = [];
       for (let i = 0; i < count; i++) {
         const base: Parameters<typeof addCombatant>[1] = { name: count > 1 ? `${name} ${String.fromCharCode(65 + i)}` : name, initBonus: bonus, isPlayer };
@@ -147,6 +156,7 @@ async function monster(ctx: Ctx): Promise<Reply> {
     ctx.store,
     ctx.channelId,
     (cb) => {
+      ensureRoom(cb, count);
       const added = addMonsters(cb, m, count, {
         rollHp: !(ctx.boolean("average_hp") ?? false),
         ...(ctx.rng ? { rng: ctx.rng } : {}),
@@ -174,33 +184,46 @@ async function step(ctx: Ctx, dir: "next" | "prev"): Promise<Combat> {
   return combat;
 }
 
-/** Applies HP changes to a combatant, and to the linked character sheet for players. */
+/**
+ * Applies HP changes to a combatant. For player characters the sheet is the
+ * source of truth (temp HP, death saves), and the combatant mirrors it.
+ */
 async function changeHp(ctx: Ctx, kind: "damage" | "heal"): Promise<Reply> {
   const targetName = ctx.requireString("target");
   const amount = ctx.requireInteger("amount");
+  const before = await getCombat(ctx.store, ctx.channelId);
+  if (!before) throw new UserError("There's no combat in this channel. Start one with `/init start`.");
+  const found = findCombatant(before, targetName);
+  if (!found) throw new UserError(`No combatant called "${targetName}".`);
+  if (found.hp === undefined) throw new UserError(`${found.name} has no HP tracked. Re-add them with the \`hp\` option.`);
+
+  let note = "";
+  if (found.characterId && found.ownerId) {
+    const { char, result } = await editCharacter(
+      ctx.store,
+      { guildId: before.guildId, ownerId: found.ownerId, id: found.characterId },
+      (c) => (kind === "damage" ? applyDamage(c, amount).absorbedByTemp : (heal(c, amount), 0)),
+      ctx.now(),
+    );
+    await syncCharacterToCombat(ctx.store, ctx.channelId, char);
+    if (result) note = ` (${result} absorbed by temp HP)`;
+  }
   const { combat, result: target } = await editCombat(
     ctx.store,
     ctx.channelId,
     (cb) => {
-      const t = findCombatant(cb, targetName);
-      if (!t) throw new UserError(`No combatant called "${targetName}".`);
-      if (t.hp === undefined) throw new UserError(`${t.name} has no HP tracked. Re-add them with the \`hp\` option.`);
-      if (kind === "damage") damageCombatant(t, amount);
-      else healCombatant(t, amount);
+      const t = cb.combatants.find((x) => x.id === found.id);
+      if (!t) throw new UserError(`${found.name} left the fight.`);
+      if (!t.characterId) {
+        if (kind === "damage") damageCombatant(t, amount);
+        else healCombatant(t, amount);
+      }
       pushLog(cb, `${t.name} ${kind === "damage" ? `took ${amount} damage` : `healed ${amount}`}${isDown(t) ? " and is down!" : "."}`);
       return t;
     },
     ctx.now(),
   );
-  if (target.characterId && target.ownerId) {
-    await editCharacter(
-      ctx.store,
-      { guildId: combat.guildId, ownerId: target.ownerId, id: target.characterId },
-      (c) => (kind === "damage" ? applyDamage(c, amount) : heal(c, amount)),
-      ctx.now(),
-    ).catch(() => undefined);
-  }
-  const verb = kind === "damage" ? `🩸 **${target.name}** takes **${amount}** damage` : `💚 **${target.name}** heals **${amount}**`;
+  const verb = kind === "damage" ? `🩸 **${target.name}** takes **${amount}** damage${note}` : `💚 **${target.name}** heals **${amount}**`;
   return trackerReply(combat, { note: `${verb}${isDown(target) ? " — **down!**" : "."}` });
 }
 

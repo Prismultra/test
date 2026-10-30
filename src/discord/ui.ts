@@ -60,7 +60,8 @@ export function embed(input: EmbedInput): APIEmbed {
   const e: APIEmbed = { color: input.color ?? COLORS.brand };
   let budget = LIMITS.total;
   const take = (s: string, max: number) => {
-    const t = truncate(s, Math.min(max, budget));
+    const limit = Math.min(max, budget);
+    const t = limit > 0 ? truncate(s, limit) : "";
     budget -= t.length;
     return t;
   };

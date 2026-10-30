@@ -14,11 +14,13 @@ export const SRD_ATTRIBUTION =
   "available at https://dnd.wizards.com/resources/systems-reference-document. " +
   "The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License.";
 
+/** Lowercases, strips accents and collapses punctuation. Keeps letters and digits of any script. */
 export const normalize = (s: string) =>
   s
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\p{M}+/gu, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
 
 interface Named {

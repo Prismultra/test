@@ -1,4 +1,4 @@
-import { applyDamage, mod, rollCheck, rollDeathSave, rollSave, skillBonus, type Character } from "../game/character.js";
+import { applyDamage, isDead, isStable, mod, rollCheck, rollDeathSave, rollSave, skillBonus, type Character } from "../game/character.js";
 import { applyMode, critical, evaluate, parse, totalsByLabel } from "../game/dice.js";
 import { damageCombatant, findCombatant, isDown, pushLog } from "../game/combat.js";
 import { ABILITIES, ABILITY_NAMES, SKILL_KEYS, SKILLS, parseAbility, parseSkill, signed } from "../game/rules.js";
@@ -192,6 +192,8 @@ export const deathSaveCommand: CommandModule = {
   async run(ctx) {
     const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
     if (active.hp > 0) throw new UserError(`${active.name} isn't at 0 HP, so no death save needed.`);
+    if (isDead(active)) throw new UserError(`${active.name} has already failed three death saves. Only magic can help now.`);
+    if (isStable(active)) throw new UserError(`${active.name} is stable — no more death saves unless they take damage.`);
     const { char, result } = await editCharacter(ctx.store, active, (c) => rollDeathSave(c, ctx.rng), ctx.now());
     await syncCharacterToCombat(ctx.store, ctx.channelId, char).catch(() => undefined);
     const msg = {

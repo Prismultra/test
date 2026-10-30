@@ -38,13 +38,16 @@ export async function requireActive(store: Store, guildId: string, userId: strin
   throw new UserError("Pick your active character first with `/char use`.");
 }
 
+/** Finds a character by id (what autocomplete sends) or by name. */
 export function findOwnCharacter(chars: Character[], query: string): Character | undefined {
+  const byId = chars.find((c) => c.id === query.trim());
+  if (byId) return byId;
+  const exact = chars.find((c) => c.name.trim().toLowerCase() === query.trim().toLowerCase());
+  if (exact) return exact;
+  // Fuzzy matching only when the query has letters or digits left after normalizing.
   const q = normalize(query);
-  return (
-    chars.find((c) => c.id === query) ??
-    chars.find((c) => normalize(c.name) === q) ??
-    chars.find((c) => normalize(c.name).startsWith(q))
-  );
+  if (!q) return undefined;
+  return chars.find((c) => normalize(c.name) === q) ?? chars.find((c) => normalize(c.name).startsWith(q));
 }
 
 export const characterKey = (c: Pick<Character, "guildId" | "ownerId" | "id">) => keys.character(c.guildId, c.ownerId, c.id);

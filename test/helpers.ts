@@ -36,8 +36,8 @@ export class FakeDiscord implements DiscordApi {
 /** A model that replays scripted responses and records every request. */
 export class ScriptedModel implements DmModel {
   requests: ModelRequest[] = [];
-  constructor(private script: ((req: ModelRequest) => BetaMessage)[] = []) {}
-  push(...steps: ((req: ModelRequest) => BetaMessage)[]) {
+  constructor(private script: ((req: ModelRequest) => BetaMessage | Promise<BetaMessage>)[] = []) {}
+  push(...steps: ((req: ModelRequest) => BetaMessage | Promise<BetaMessage>)[]) {
     this.script.push(...steps);
   }
   async create(req: ModelRequest): Promise<BetaMessage> {
@@ -45,7 +45,7 @@ export class ScriptedModel implements DmModel {
     this.requests.push(structuredClone(req));
     const next = this.script.shift();
     if (!next) throw new Error("ScriptedModel ran out of responses");
-    return next(req);
+    return await next(req);
   }
 }
 

@@ -18,21 +18,25 @@ import {
   releaseTurn,
   requireCampaign,
   newId,
+  takeLock,
   type Campaign,
   type PendingRoll,
   type QueuedAction,
+  type TurnLock,
 } from "./campaign.js";
 import { askDm, compactIfNeeded, loadParty, resolvePendingRoll, runDmTurn, type DmDeps, type TurnResult } from "./dm.js";
 import { LENGTHS, TONES, type TurnTrigger } from "./prompt.js";
 
 /** Extra queued turns one invocation will run before handing the queue to the next /act. */
 const MAX_DRAIN = 4;
+/** Don't start another queued turn after this long, so the invocation finishes before Vercel's 300s limit. */
+const DRAIN_BUDGET_MS = 110_000;
 
 function dmDeps(ctx: Ctx): DmDeps {
   const model = ctx.deps.dm;
   if (!model) {
     throw new UserError(
-      "The AI Dungeon Master isn't enabled for this bot. The bot owner can turn it on by setting `ANTHROPIC_API_KEY`. Everything else (dice, sheets, combat) works without it!",
+      "The AI Dungeon Master isn't enabled for this bot. The bot owner can turn it on by setting `ANTHROPIC_API_KEY` or a free `GROQ_API_KEY`. Everything else (dice, sheets, combat) works without it!",
     );
   }
   const deps: DmDeps = { store: ctx.store, model, now: () => ctx.now() };
@@ -68,7 +72,7 @@ function rollRows(rolls: PendingRoll[]): ActionRow[] {
 
 const quote = (actions: QueuedAction[]) =>
   actions
-    .filter((a) => !a.isRollResult)
+    .filter((a) => !a.wake)
     .map((a) => `> **${a.characterName}**: ${truncate(a.text.replace(/\n+/g, " "), 300)}`)
     .join("\n");
 
@@ -112,44 +116,56 @@ async function postFollowup(ctx: Ctx, reply: Reply) {
   for (const f of reply.followups ?? []) await ctx.deps.discord.followup(ctx.token, toMessageData(f));
 }
 
-/** After a turn: run turns for actions that queued up meanwhile, then fold old transcript into the summary. */
-async function drainAndCompact(ctx: Ctx, deps: DmDeps) {
+/**
+ * After a turn: run turns for actions that queued up meanwhile, then fold old
+ * transcript into the summary. Stops early to stay within the function's time
+ * limit; whatever is still queued runs with the next /act.
+ */
+async function drainAndCompact(ctx: Ctx, deps: DmDeps, lock: TurnLock, started: number) {
   try {
     for (let i = 0; ; i++) {
-      if (i >= MAX_DRAIN) {
-        // Leave the rest of the queue for the next /act so this invocation doesn't run too long.
-        await releaseTurn(deps.store, ctx.channelId, deps.now());
+      if (i >= MAX_DRAIN || Date.now() - started > DRAIN_BUDGET_MS) {
+        const waiting = await releaseTurn(deps.store, ctx.channelId, lock, deps.now());
+        if (waiting) {
+          await postFollowup(ctx, {
+            content: `-# ⏳ The DM is catching their breath — ${waiting} queued action${waiting === 1 ? "" : "s"} will be handled with the next \`/act\`.`,
+          }).catch(() => undefined);
+        }
         break;
       }
-      const queued = await releaseOrTakeQueue(deps.store, ctx.channelId, deps.now());
+      const queued = await releaseOrTakeQueue(deps.store, ctx.channelId, lock, deps.now());
       if (!queued.length) break;
       try {
-        const result = await runDmTurn(deps, ctx.channelId, { kind: "actions", actions: queued });
-        await postFollowup(ctx, await narrationReply(ctx, result, quote(queued)));
+        const result = await runDmTurn(deps, ctx.channelId, { kind: "turn", actions: queued }, lock.campaignId);
+        if (result) await postFollowup(ctx, await narrationReply(ctx, result, quote(queued)));
       } catch (err) {
-        console.error("queued DM turn failed", err);
-        await postFollowup(ctx, { content: `⚠️ The DM lost their train of thought on:\n${quote(queued)}\nPlease try again with \`/act\`.` });
+        if (!(err instanceof UserError)) console.error("queued DM turn failed", err);
+        const why = err instanceof UserError ? err.message : "The DM lost their train of thought.";
+        const what = quote(queued);
+        await postFollowup(ctx, { content: `⚠️ ${why}${what ? `\n${what}\nPlease try again with \`/act\`.` : ""}` }).catch(() => undefined);
       }
     }
   } catch (err) {
     console.error("draining the DM queue failed", err);
-    await releaseTurn(deps.store, ctx.channelId, deps.now());
+    await releaseTurn(deps.store, ctx.channelId, lock, deps.now());
   }
   await compactIfNeeded(deps, ctx.channelId).catch((err) => console.error("summary failed", err));
 }
 
-/** Runs a DM turn as a deferred reply, with queue draining afterwards. The lock must already be held. */
-function deferredTurn(ctx: Ctx, deps: DmDeps, trigger: TurnTrigger, header: string) {
+/** Runs a DM turn as a deferred reply, with queue draining afterwards. `lock` must be held. */
+function deferredTurn(ctx: Ctx, deps: DmDeps, trigger: TurnTrigger, header: string, lock: TurnLock) {
+  const started = Date.now();
   return defer(async () => {
-    let result: TurnResult;
+    let reply: Reply;
     try {
-      result = await runDmTurn(deps, ctx.channelId, trigger);
+      const result = await runDmTurn(deps, ctx.channelId, trigger, lock.campaignId);
+      reply = result ? await narrationReply(ctx, result, header) : { content: header || "…" };
     } catch (err) {
-      await releaseTurn(deps.store, ctx.channelId, deps.now());
+      await releaseTurn(deps.store, ctx.channelId, lock, deps.now());
       throw err;
     }
-    const reply = await narrationReply(ctx, result, header);
-    reply.after = () => drainAndCompact(ctx, deps);
+    // Runs even if posting the reply fails, so the lock is always released.
+    reply.after = () => drainAndCompact(ctx, deps, lock, started);
     return reply;
   });
 }
@@ -191,7 +207,7 @@ export const actCommand: CommandModule = {
     if (!lock.acquired) {
       return { content: `${quote([action])}\n-# ⏳ The DM is mid-scene — your action is queued (#${lock.position}).` };
     }
-    return deferredTurn(ctx, deps, { kind: "actions", actions: lock.actions }, quote(lock.actions));
+    return deferredTurn(ctx, deps, { kind: "turn", actions: lock.actions }, quote(lock.actions), lock.lock);
   },
 };
 
@@ -212,7 +228,7 @@ async function start(ctx: Ctx): Promise<Reply | ReturnType<typeof defer>> {
   });
   const c = await getActive(ctx.store, ctx.guildId, ctx.userId);
   if (c) campaign.party.push({ userId: ctx.userId, userName: ctx.userName, characterId: c.id, characterName: c.name });
-  campaign.busySince = ctx.now().toISOString();
+  const lock = takeLock(campaign, ctx.now());
   if ((await ctx.store.put(keys.campaign(ctx.channelId), campaign, "create")) === undefined) {
     throw new UserError("A campaign was just started here.");
   }
@@ -222,7 +238,7 @@ async function start(ctx: Ctx): Promise<Reply | ReturnType<typeof defer>> {
     c ? `Party: **${c.name}**. Others can join with \`/dm join\`.` : "Join with `/dm join` once you have a character (`/char create`).",
     "Play with `/act` · roll when the DM asks · `/dm ask` for out-of-character questions.",
   ].join("\n");
-  return deferredTurn(ctx, deps, { kind: "start" }, header);
+  return deferredTurn(ctx, deps, { kind: "start" }, header, lock);
 }
 
 async function join(ctx: Ctx): Promise<Reply> {
@@ -376,34 +392,33 @@ export const dmButtons: ComponentModule = {
       await postFollowup(ctx, rollMessage);
       if (!outcome.batchDone || !ctx.deps.dm) return;
       const deps = dmDeps(ctx);
-      const resultsText = outcome.batch.map((b) => b.result?.text ?? "").filter(Boolean);
-      const lock = await acquireTurn(
-        ctx.store,
-        ctx.channelId,
-        {
-          userId: ctx.userId,
-          userName: ctx.userName,
-          characterName: r.characterName,
-          text: `Roll results: ${resultsText.join(" | ")}`,
-          at: ctx.now().toISOString(),
-          isRollResult: true,
-        },
-        ctx.now(),
-      );
-      if (!lock.acquired) return; // Queued: the running turn will pick the results up.
-      // We hold the lock; player actions that queued up meanwhile go into the same turn.
-      const others = lock.actions.filter((a) => !a.isRollResult);
-      const trigger: TurnTrigger = others.length ? { kind: "actions", actions: lock.actions } : { kind: "rolls", rolls: outcome.batch };
+      const started = Date.now();
+      const wake: QueuedAction = {
+        userId: ctx.userId,
+        userName: ctx.userName,
+        characterName: r.characterName,
+        text: "",
+        at: ctx.now().toISOString(),
+        wake: true,
+      };
+      let lock;
       try {
-        const result = await runDmTurn(deps, ctx.channelId, trigger);
-        await postFollowup(ctx, await narrationReply(ctx, result, others.length ? quote(others) : ""));
+        lock = await acquireTurn(ctx.store, ctx.channelId, wake, ctx.now());
       } catch (err) {
-        console.error("DM turn after rolls failed", err);
-        await releaseTurn(deps.store, ctx.channelId, deps.now());
-        await postFollowup(ctx, { content: "⚠️ The DM fumbled their notes. Continue with `/act` and they'll pick it up." });
+        if (!(err instanceof UserError)) throw err;
+        await postFollowup(ctx, { content: `⚠️ ${err.message}` });
         return;
       }
-      await drainAndCompact(ctx, deps);
+      // If a turn is running, the results are picked up by it or the next one.
+      if (!lock.acquired) return;
+      try {
+        const result = await runDmTurn(deps, ctx.channelId, { kind: "turn", actions: lock.actions }, lock.lock.campaignId);
+        if (result) await postFollowup(ctx, await narrationReply(ctx, result, quote(lock.actions)));
+      } catch (err) {
+        if (!(err instanceof UserError)) console.error("DM turn after rolls failed", err);
+        await postFollowup(ctx, { content: "⚠️ The DM fumbled their notes. Continue with `/act` and they'll pick it up." }).catch(() => undefined);
+      }
+      await drainAndCompact(ctx, deps, lock.lock, started);
     };
 
     // Update the clicked message's buttons to show the result; the rest happens in the background.

@@ -43,11 +43,19 @@ export interface QueuedAction {
   characterName: string;
   text: string;
   at: string;
-  /** Roll results that arrived while another turn was running. */
-  isRollResult?: boolean;
+  /** Not a player action: a batch of rolls finished, so the DM should take a turn. */
+  wake?: boolean;
+}
+
+/** Proof of holding a campaign's turn lock. */
+export interface TurnLock {
+  campaignId: string;
+  lockId: string;
 }
 
 export interface Campaign {
+  /** Distinguishes this campaign from a later one in the same channel. */
+  id: string;
   channelId: string;
   guildId: string;
   createdBy: string;
@@ -64,15 +72,18 @@ export interface Campaign {
   notes: string[];
   transcript: TranscriptEntry[];
   turns: number;
-  /** Set while a DM turn is being generated; new actions queue up behind it. */
-  busySince?: string;
+  /** Held while a DM turn is being generated; new actions queue up behind it. */
+  lock?: { id: string; since: string };
   queue: QueuedAction[];
   pendingRolls: PendingRoll[];
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; calls: number };
 }
 
-/** A lock older than this is assumed to belong to a crashed turn. */
-export const LOCK_TIMEOUT_MS = 4 * 60 * 1000;
+/**
+ * A lock older than this is assumed to belong to a crashed turn. It's longer than
+ * the Vercel function's 300s limit, so a live turn can't have its lock taken over.
+ */
+export const LOCK_TIMEOUT_MS = 330 * 1000;
 export const MAX_NOTES = 50;
 export const MAX_QUEUE = 20;
 
@@ -89,6 +100,7 @@ export function createCampaign(opts: {
 }): Campaign {
   const at = opts.now.toISOString();
   return {
+    id: newId(),
     channelId: opts.channelId,
     guildId: opts.guildId,
     createdBy: opts.createdBy,
@@ -134,9 +146,18 @@ export async function editCampaign<R>(
 }
 
 const lockHeld = (c: Campaign, now: Date) =>
-  c.busySince !== undefined && now.getTime() - new Date(c.busySince).getTime() < LOCK_TIMEOUT_MS;
+  c.lock !== undefined && now.getTime() - new Date(c.lock.since).getTime() < LOCK_TIMEOUT_MS;
 
-export type AcquireResult = { acquired: true; actions: QueuedAction[] } | { acquired: false; position: number };
+const owns = (c: Campaign, lock: TurnLock) => c.id === lock.campaignId && c.lock?.id === lock.lockId;
+
+/** Takes the lock on a campaign object directly (used when creating one). */
+export function takeLock(c: Campaign, now: Date): TurnLock {
+  const id = newId();
+  c.lock = { id, since: now.toISOString() };
+  return { campaignId: c.id, lockId: id };
+}
+
+export type AcquireResult = { acquired: true; lock: TurnLock; actions: QueuedAction[] } | { acquired: false; position: number };
 
 /**
  * Takes the campaign's turn lock. If another turn is running, the action is
@@ -153,29 +174,35 @@ export async function acquireTurn(store: Store, channelId: string, action: Queue
         c.queue.push(action);
         return { acquired: false, position: c.queue.length };
       }
-      c.busySince = now.toISOString();
+      const lock = takeLock(c, now);
       const actions = [...c.queue, ...(action ? [action] : [])];
       c.queue = [];
-      return { acquired: true, actions };
+      return { acquired: true, lock, actions };
     },
     now,
   );
   return result;
 }
 
-/** Releases the lock, unless actions queued up meanwhile; then returns them and keeps the lock. */
-export async function releaseOrTakeQueue(store: Store, channelId: string, now: Date): Promise<QueuedAction[]> {
+/**
+ * Releases the lock, unless actions queued up meanwhile; then returns them and
+ * keeps (refreshes) the lock. Does nothing if the lock isn't ours anymore.
+ */
+export async function releaseOrTakeQueue(store: Store, channelId: string, lock: TurnLock, now: Date): Promise<QueuedAction[]> {
+  const c = await getCampaign(store, channelId);
+  if (!c || !owns(c, lock)) return [];
   const { result } = await editCampaign(
     store,
     channelId,
-    (c) => {
-      if (c.queue.length) {
-        const q = c.queue;
-        c.queue = [];
-        c.busySince = now.toISOString();
+    (cur) => {
+      if (!owns(cur, lock)) return [];
+      if (cur.queue.length) {
+        const q = cur.queue;
+        cur.queue = [];
+        cur.lock = { id: lock.lockId, since: now.toISOString() };
         return q;
       }
-      delete c.busySince;
+      delete cur.lock;
       return [];
     },
     now,
@@ -183,6 +210,22 @@ export async function releaseOrTakeQueue(store: Store, channelId: string, now: D
   return result;
 }
 
-export async function releaseTurn(store: Store, channelId: string, now: Date) {
-  await editCampaign(store, channelId, (c) => void delete c.busySince, now).catch(() => undefined);
+/** Releases the lock if we still hold it. Returns how many actions are still queued. */
+export async function releaseTurn(store: Store, channelId: string, lock: TurnLock, now: Date): Promise<number> {
+  try {
+    const c = await getCampaign(store, channelId);
+    if (!c || !owns(c, lock)) return 0;
+    const { result } = await editCampaign(
+      store,
+      channelId,
+      (cur) => {
+        if (owns(cur, lock)) delete cur.lock;
+        return cur.queue.length;
+      },
+      now,
+    );
+    return result;
+  } catch {
+    return 0;
+  }
 }

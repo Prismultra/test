@@ -55,7 +55,7 @@ describe("AI Dungeon Master", () => {
     expect(campaign.title).toBe("The Sunken Bell");
     expect(campaign.notes).toContain("Harbormaster Oyelaran is nervous");
     expect(campaign.party.map((p) => p.characterName)).toEqual(["Mira"]);
-    expect(campaign.busySince).toBeUndefined();
+    expect(campaign.lock).toBeUndefined();
     expect(campaign.pendingRolls).toHaveLength(1);
 
     // The first request carries the whole state; the second appends the tool results.
@@ -102,7 +102,7 @@ describe("AI Dungeon Master", () => {
     // While a turn is running, other actions queue up and run right after it.
     const store = env.deps.store;
     const c = (await store.get<Campaign>(keys.campaign("chan1")))!;
-    await store.put(keys.campaign("chan1"), { ...c.value, busySince: new Date("2026-10-30T11:59:00Z").toISOString() }, c.version);
+    await store.put(keys.campaign("chan1"), { ...c.value, lock: { id: "someone-else", since: new Date("2026-10-30T11:59:00Z").toISOString() } }, c.version);
     const queued = await run(env.deps, command(SAM, "act", opts({ action: "I draw my sword and step in front of Mira" })));
     expect(queued.type).toBe(MESSAGE);
     expect(queued.data.content).toContain("queued (#1)");
@@ -111,7 +111,7 @@ describe("AI Dungeon Master", () => {
 
     // Release the fake lock; Alex's action picks up Sam's queued one in the same turn.
     const c2 = (await store.get<Campaign>(keys.campaign("chan1")))!;
-    const { busySince: _busy, ...rest } = c2.value;
+    const { lock: _lock, ...rest } = c2.value;
     await store.put(keys.campaign("chan1"), rest, c2.version);
 
     model.push(
@@ -169,7 +169,7 @@ describe("AI Dungeon Master", () => {
     await env.flush();
     const edit = env.discord.calls.find((c) => c.kind === "edit")!.body!;
     expect(edit.embeds![0]!.description).toContain("not a scene I can run");
-    expect((await campaignOf(env))!.busySince).toBeUndefined();
+    expect((await campaignOf(env))!.lock).toBeUndefined();
   });
 
   it("releases the lock when the model call fails", async () => {
@@ -180,7 +180,7 @@ describe("AI Dungeon Master", () => {
     const calls = env.discord.calls.map((c) => c.kind);
     expect(calls).toEqual(["delete", "followup"]);
     expect(env.discord.calls[1]!.body!.content).toContain("Something went wrong");
-    expect((await campaignOf(env))!.busySince).toBeUndefined();
+    expect((await campaignOf(env))!.lock).toBeUndefined();
   });
 
   it("answers out-of-character questions without changing the story", async () => {
