@@ -42,7 +42,7 @@ You need accounts on [Discord](https://discord.com/developers/applications), [Gi
 ### 2. Create the database
 
 1. In [Supabase](https://supabase.com/dashboard), create a new project.
-2. Open **SQL Editor**, paste the contents of [`supabase/migrations/0001_kv.sql`](supabase/migrations/0001_kv.sql), and run it.
+2. Open **SQL Editor**, paste the contents of [`supabase/migrations/0001_tavernkeep_kv.sql`](supabase/migrations/0001_tavernkeep_kv.sql), and run it.
 3. In **Project Settings → API**, copy the **Project URL** and the **service_role** key (not the anon key).
 
 ### 3. Deploy to Vercel
