@@ -10,6 +10,8 @@ create table if not exists public.kv (
 
 alter table public.kv enable row level security;
 -- No policies: anon and authenticated roles get no access. The service role bypasses RLS.
+revoke all on table public.kv from anon, authenticated;
+grant select, insert, update, delete on table public.kv to service_role;
 
 -- Conditional write. p_mode is 'any' (upsert), 'create' (insert only) or 'cas'
 -- (update only when version = p_expected). Returns the new version, or null
