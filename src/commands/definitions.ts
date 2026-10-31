@@ -296,6 +296,46 @@ export const COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
     str("reason", "What it's for, e.g. sneaking past the guard", { max_length: 200 }),
   ]),
 
+  command("party", "DM only: change players' HP, level, items, coins and conditions", [
+    sub("hp", "Damage, heal or set a player's HP", [
+      userOpt("player", "Who", REQUIRED),
+      str("action", "What happens", {
+        ...REQUIRED,
+        choices: choices([
+          ["Damage", "damage"],
+          ["Heal", "heal"],
+          ["Temporary HP", "temp"],
+          ["Set HP", "set"],
+        ]),
+      }),
+      int("amount", "How much", { ...REQUIRED, min_value: 0, max_value: 9999 }),
+    ]),
+    sub("set", "Change any field on a player's sheet (level, XP, AC, stats...)", [
+      userOpt("player", "Who", REQUIRED),
+      str("field", "What to change", { ...REQUIRED, ...AUTO }),
+      str("value", "New value", { ...REQUIRED, max_length: 1000 }),
+    ]),
+    sub("give", "Give an item (negative quantity takes it away)", [
+      userOpt("player", "Who", REQUIRED),
+      str("item", "Item", { ...REQUIRED, ...AUTO, max_length: 80 }),
+      int("qty", "How many (default 1; negative to take)", { min_value: -9999, max_value: 9999 }),
+    ]),
+    sub("coins", "Give or take coins (negative to take)", [
+      userOpt("player", "Who", REQUIRED),
+      int("gp", "Gold", { min_value: -1000000, max_value: 1000000 }),
+      int("sp", "Silver", { min_value: -1000000, max_value: 1000000 }),
+      int("cp", "Copper", { min_value: -1000000, max_value: 1000000 }),
+      int("pp", "Platinum", { min_value: -1000000, max_value: 1000000 }),
+    ]),
+    sub("condition", "Add or remove a condition", [
+      userOpt("player", "Who", REQUIRED),
+      str("condition", "Condition", { ...REQUIRED, ...AUTO, max_length: 40 }),
+      bool("remove", "Remove instead of add"),
+    ]),
+    sub("xp", "Award XP to everyone in the party", [int("amount", "XP each", { ...REQUIRED, min_value: -100000, max_value: 100000 })]),
+    sub("rest", "The whole party takes a long rest"),
+  ]),
+
   command("narrate", "DM only: tell the story (saved so the AI can pick up later)", [
     str("text", "What happens", { ...REQUIRED, max_length: 4000 }),
     str("scene", "Set the current scene or location", { max_length: 200 }),

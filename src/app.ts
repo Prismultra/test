@@ -23,6 +23,7 @@ import { helpCommand } from "./commands/help.js";
 import { actCommand, dmButtons, dmCommand } from "./ai/commands.js";
 import { groupStatusCommand, narrateCommand, requestRollCommand } from "./ai/human.js";
 import { voteButtons } from "./ai/vote.js";
+import { partyCommand } from "./ai/party.js";
 
 const COMMAND_MODULES: CommandModule[] = [
   rollCommand,
@@ -44,6 +45,7 @@ const COMMAND_MODULES: CommandModule[] = [
   groupStatusCommand,
   narrateCommand,
   requestRollCommand,
+  partyCommand,
   helpCommand,
 ];
 

@@ -17,6 +17,7 @@ import { UserError, button, row, type Reply } from "../discord/ui.js";
 import type { Ctx } from "../discord/context.js";
 import { editCharacter, requireActive } from "./characters.js";
 import { syncCharacterToCombat } from "./combat-store.js";
+import { guardCharacterEdit } from "./dm-guard.js";
 import { choice, type CommandModule, type ComponentModule } from "./registry.js";
 import {
   armorEmbed,
@@ -76,6 +77,7 @@ export const conditionCommand: CommandModule = {
     }
     const label = srd && normalize(srd.name) === normalize(name) ? srd.name : name.trim().slice(0, 40);
     const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
+    await guardCharacterEdit(ctx, active.id, "your conditions");
     const { char, result } = await editCharacter(
       ctx.store,
       active,

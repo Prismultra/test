@@ -15,7 +15,7 @@ It runs as a single serverless function (Discord's slash-command webhooks, no al
 | ⚔️ **Combat tracker** | `/init start` · `/init join` · `/init monster goblin count:4` (rolls HP + initiative) · ▶️ Next-turn buttons · `/init damage/heal/condition` · monster HP hidden from players by default · player HP stays in sync with sheets |
 | 📚 **SRD 5.1 lookups** | `/monster` (334 stat blocks) · `/spell info` (319 spells) · `/condition` · `/item` — all with autocomplete |
 | 🐉 **AI Dungeon Master** | `/dm start` · `/dm join` · `/act` · `/dm ask` · `/dm recap` · `/dm status` · `/dm end` |
-| 🧙 **Human Dungeon Master** | `/dm vote` · `/group-status` · `/narrate` · `/request-roll` · `/dm ai` |
+| 🧙 **Human Dungeon Master** | `/dm vote` · `/group-status` · `/narrate` · `/request-roll` · `/party` · `/dm ai` |
 
 ### The AI Dungeon Master
 
@@ -45,6 +45,8 @@ If the AI hits its daily limit (or runs out of credit, or isn't set up), the bot
 - **`/narrate`** — posts narration (saved to the story, so the AI can pick up seamlessly later)
 - **`/request-roll`** — asks a player to roll a check, save or attack: they get a 🎲 button, their sheet's bonuses apply, and a hidden DC turns into success or failure
 - **`/dm ai`** — hands the seat back to the AI
+
+- **`/party`** — the DM controls players' HP, level, XP, items, coins and conditions. During a campaign, players can't change those on their own sheets (cosmetic fields like name and notes stay theirs).
 
 While a human runs the game, `/act` pings the DM. The party can also start a vote any time with `/dm vote`.
 

@@ -4,6 +4,7 @@ import type { Ctx } from "../discord/context.js";
 import { editCharacter, requireActive } from "./characters.js";
 import { syncCharacterToCombat } from "./combat-store.js";
 import type { CommandModule } from "./registry.js";
+import { guardCharacterEdit } from "./dm-guard.js";
 import { rollLine } from "./views.js";
 
 const hpText = (c: Character) => `${c.hp}/${c.maxHp}${c.tempHp ? ` (+${c.tempHp} temp)` : ""}\n${hpBar(c.hp, c.maxHp)}`;
@@ -19,6 +20,7 @@ export const hpCommand: CommandModule = {
   names: ["hp"],
   async run(ctx) {
     const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
+    if (ctx.subcommand !== "show") await guardCharacterEdit(ctx, active.id, "your HP");
     switch (ctx.subcommand) {
       case "damage": {
         const amount = ctx.requireInteger("amount");
@@ -69,6 +71,7 @@ export const restCommand: CommandModule = {
   names: ["rest"],
   async run(ctx) {
     const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
+    await guardCharacterEdit(ctx, active.id, "when you rest (`/party rest`)");
     if (ctx.requireString("type") === "long") {
       const { char } = await editCharacter(ctx.store, active, (c) => longRest(c), ctx.now());
       return finish(

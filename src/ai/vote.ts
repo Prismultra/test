@@ -98,6 +98,7 @@ export function electedReply(c: Campaign, note?: string): Reply {
           "• `/group-status` — the whole picture (only you can see it): story, notes, everyone's sheets, combat with monster HP, pending rolls",
           "• `/narrate` — tell the story; it's saved so the AI can pick up later",
           "• `/request-roll` — make a player roll for their fate: they get a 🎲 button and their sheet's bonuses apply",
+          "• `/party` — you control HP, levels, XP, items, coins and conditions (players can't change those themselves)",
           "• `/init` and `/monster` work as usual for fights",
           "• `/dm ai` — hand the seat back to the AI when it's available again",
           "",

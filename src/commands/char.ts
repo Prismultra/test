@@ -16,6 +16,7 @@ import {
   SKILLS,
   SPECIES,
   classInfo,
+  defaultMaxHp,
   levelForXp,
   parseAbility,
   parseSkill,
@@ -40,11 +41,16 @@ import {
 import { choice, type Choice, type CommandModule } from "./registry.js";
 import { characterEmbed } from "./views.js";
 import { parse } from "../game/dice.js";
+import { getCampaign } from "../ai/campaign.js";
+import { guardCharacterEdit, isDmOrManager } from "./dm-guard.js";
+
+/** Fields players can always change themselves; the rest belong to the DM during a campaign. */
+export const COSMETIC_FIELDS = new Set(["name", "species", "background", "alignment", "notes", "portrait"]);
 
 const MAX_CHARACTERS = 25;
 
 /** Fields settable with /char set: name -> [description, apply]. */
-const FIELDS: Record<string, { label: string; apply: (c: Character, value: string) => string }> = {
+export const FIELDS: Record<string, { label: string; apply: (c: Character, value: string) => string }> = {
   name: { label: "Name", apply: (c, v) => ((c.name = v.slice(0, 64)), `Name is now **${c.name}**.`) },
   species: { label: "Species", apply: (c, v) => ((c.species = v.slice(0, 40)), `Species is now **${c.species}**.`) },
   class: {
@@ -70,9 +76,16 @@ const FIELDS: Record<string, { label: string; apply: (c: Character, value: strin
     label: "Level",
     apply: (c, v) => {
       const before = c.maxHp;
-      setLevel(c, intValue(v, 1, 20));
+      const target = intValue(v, 1, 20);
+      const lowering = target < c.level;
+      setLevel(c, target);
+      if (lowering) {
+        c.maxHp = defaultMaxHp(c.classKey, c.level, c.abilities.con);
+        c.hp = Math.min(c.hp, c.maxHp);
+        c.hitDiceUsed = Math.min(c.hitDiceUsed, c.level);
+      }
       const gained = c.maxHp - before;
-      return `Now level **${c.level}**${gained > 0 ? ` (+${gained} max HP)` : ""}.`;
+      return `Now level **${c.level}**${gained > 0 ? ` (+${gained} max HP)` : gained < 0 ? ` (max HP ${c.maxHp})` : ""}.`;
     },
   },
   ...Object.fromEntries(
@@ -172,6 +185,12 @@ async function create(ctx: Ctx): Promise<Reply> {
   };
   const species = ctx.string("species");
   if (species) input.species = species;
+  if (((ctx.integer("level") ?? 1) > 1 || ctx.has("hp") || ctx.has("ac")) && ctx.interaction.channel_id) {
+    const campaign = await getCampaign(ctx.store, ctx.channelId);
+    if (campaign && !isDmOrManager(ctx, campaign)) {
+      throw new UserError("🔒 A campaign is running here, so new characters start at level 1 with normal HP and AC. The DM levels you up.");
+    }
+  }
   const level = ctx.integer("level");
   if (level !== undefined) input.level = level;
   const hp = ctx.integer("hp");
@@ -241,6 +260,7 @@ async function set(ctx: Ctx): Promise<Reply> {
   if (!def) throw new UserError(`Unknown field "${field}". Pick one from the list.`);
   const value = ctx.requireString("value");
   const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
+  if (!COSMETIC_FIELDS.has(field)) await guardCharacterEdit(ctx, active.id, `your ${def.label.toLowerCase()}`);
   const { char, result } = await editCharacter(ctx.store, active, (c) => def.apply(c, value), ctx.now());
   return { content: `✏️ **${char.name}**: ${result}`, ephemeral: false };
 }

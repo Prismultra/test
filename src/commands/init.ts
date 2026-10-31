@@ -26,6 +26,7 @@ import type { Ctx } from "../discord/context.js";
 import { editCharacter, requireActive } from "./characters.js";
 import { editCombat, getCombat, syncCharacterToCombat } from "./combat-store.js";
 import { choice, type CommandModule, type ComponentModule } from "./registry.js";
+import { guardDmAction } from "./dm-guard.js";
 import { parseMode } from "./roll.js";
 
 export function trackerReply(combat: Combat, opts: { revealHp?: boolean; ephemeral?: boolean; note?: string } = {}): Reply {
@@ -278,9 +279,13 @@ async function end(ctx: Ctx): Promise<Reply> {
   };
 }
 
+/** Combat controls that belong to the DM while a campaign runs in the channel. */
+const DM_ONLY = new Set(["add", "monster", "damage", "heal", "condition", "remove", "end", "prev"]);
+
 export const initCommand: CommandModule = {
   names: ["init"],
   async run(ctx) {
+    if (DM_ONLY.has(ctx.subcommand)) await guardDmAction(ctx, "the combat (monsters, damage, conditions)");
     switch (ctx.subcommand) {
       case "start":
         return start(ctx);
@@ -338,6 +343,7 @@ export const initCommand: CommandModule = {
 export const initButtons: ComponentModule = {
   prefix: "init",
   async run(ctx, [action]) {
+    if (action === "end" || action === "prev") await guardDmAction(ctx, "the combat");
     if (action === "end") {
       const reply = await end(ctx);
       return { ...reply, components: [], update: true };

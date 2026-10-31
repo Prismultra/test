@@ -3,11 +3,13 @@ import { MAGIC_ITEMS, WEAPONS, ARMOR, searchByName } from "../srd/index.js";
 import { COLORS, UserError, embed } from "../discord/ui.js";
 import { editCharacter, getActive, requireActive } from "./characters.js";
 import { choice, type CommandModule } from "./registry.js";
+import { guardCharacterEdit } from "./dm-guard.js";
 
 export const inventoryCommand: CommandModule = {
   names: ["inv"],
   async run(ctx) {
     const active = await requireActive(ctx.store, ctx.guildId, ctx.userId);
+    if (ctx.subcommand !== "list") await guardCharacterEdit(ctx, active.id, "your items and coins");
     switch (ctx.subcommand) {
       case "list": {
         const items = active.inventory.map((i) => `• ${i.name}${i.qty > 1 ? ` ×${i.qty}` : ""}`);

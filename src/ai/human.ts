@@ -7,6 +7,8 @@ import { ABILITIES, ABILITY_NAMES, SKILLS, SKILL_KEYS, abilityMod, parseAbility,
 import type { RollMode } from "../game/dice.js";
 import { ButtonStyle, COLORS, UserError, button, chunkText, embed, row, truncate, type Reply } from "../discord/ui.js";
 import type { Ctx } from "../discord/context.js";
+import { canManage } from "../commands/dm-guard.js";
+export { canManage };
 import { getCombat } from "../commands/combat-store.js";
 import { choice, type Choice, type CommandModule } from "../commands/registry.js";
 import { slotsText } from "../commands/views.js";
@@ -14,17 +16,6 @@ import { editCampaign, getCampaign, isHumanRun, newId, requireCampaign, type Cam
 import { keys } from "../store/store.js";
 import { loadParty } from "./dm.js";
 import { transcriptLine } from "./prompt.js";
-
-const MANAGE_GUILD = 1n << 5n;
-const ADMINISTRATOR = 1n << 3n;
-
-/** The campaign's creator, or someone who can manage the server. */
-export function canManage(ctx: Ctx, campaign: Campaign): boolean {
-  if (ctx.userId === campaign.createdBy) return true;
-  const perms = ctx.interaction.member?.permissions;
-  if (!perms) return false;
-  return (BigInt(perms) & (MANAGE_GUILD | ADMINISTRATOR)) !== 0n;
-}
 
 /** One compact block per character with what a DM needs at a glance. */
 export function dmCharacterSummary(c: Character): string {
