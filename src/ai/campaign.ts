@@ -77,7 +77,14 @@ export interface Campaign {
   queue: QueuedAction[];
   pendingRolls: PendingRoll[];
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; calls: number };
+  /** Who runs the game: the AI (default) or a player the party voted for. */
+  mode?: "ai" | "human";
+  humanDm?: { userId: string; userName: string; since: string };
+  /** An open vote for a human DM. Ballots map voter user id to candidate user id. */
+  vote?: { id: string; reason: string; startedAt: string; ballots: Record<string, string> };
 }
+
+export const isHumanRun = (c: Campaign) => c.mode === "human" && c.humanDm !== undefined;
 
 /**
  * A lock older than this is assumed to belong to a crashed turn. It's longer than

@@ -3,7 +3,7 @@
 // interface so the rest of the DM code doesn't change.
 import type { Config } from "../config.js";
 import { UserError } from "../discord/ui.js";
-import type { BetaMessage, DmModel, ModelRequest } from "./model.js";
+import { AiQuotaError, type BetaMessage, type DmModel, type ModelRequest } from "./model.js";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const MODELS_ENDPOINT = "https://api.groq.com/openai/v1/models";
@@ -281,9 +281,15 @@ export class GroqDmModel implements DmModel {
       if (res.ok) return (await res.json()) as ChatResponse;
 
       if (res.status === 429) {
-        // Free-tier limits are per minute; waiting briefly usually works.
+        // Per-minute limits clear quickly, so wait those out. Per-day limits don't.
         const wait = retryAfterMs(res.headers.get("retry-after"));
-        if (budget.waitedMs + wait > MAX_RATE_LIMIT_WAIT_MS) throw new GroqRateLimitError();
+        if (budget.waitedMs + wait > MAX_RATE_LIMIT_WAIT_MS) {
+          const body429 = await res.text().catch(() => "");
+          if (/per day|\(TPD\)|\(RPD\)/i.test(body429) || wait > 120_000) {
+            throw new AiQuotaError("The free AI Dungeon Master (Groq) has used up today's limit.");
+          }
+          throw new GroqRateLimitError();
+        }
         budget.waitedMs += wait;
         await this.sleep(wait);
         continue;

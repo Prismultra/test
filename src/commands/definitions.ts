@@ -281,7 +281,17 @@ export const COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
     ]),
     sub("recap", "Recap the story so far"),
     sub("status", "Show the campaign and party"),
+    sub("vote", "Vote for a player to be the Dungeon Master"),
+    sub("ai", "Hand the Dungeon Master seat back to the AI"),
     sub("end", "End the campaign in this channel", [bool("confirm", "Yes, end it", REQUIRED)]),
+  ]),
+
+  command("group-status", "DM only: the whole picture — story, notes, every sheet, combat (only you see it)"),
+
+  command("narrate", "DM only: tell the story (saved so the AI can pick up later)", [
+    str("text", "What happens", { ...REQUIRED, max_length: 4000 }),
+    str("scene", "Set the current scene or location", { max_length: 200 }),
+    bool("ping", "Ping the players"),
   ]),
 
   command("help", "How to use Tavernkeep"),

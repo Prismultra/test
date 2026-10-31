@@ -28,6 +28,11 @@ export const helpCommand: CommandModule = {
             },
             { name: "📚 Rules lookups (SRD 5.1)", value: "`/monster` · `/spell info` · `/condition` · `/item`" },
             {
+              name: "🧙 Human Dungeon Master",
+              value:
+                "If the AI runs out for the day (or isn't set up), the party votes for a DM with `/dm vote`. The DM gets `/group-status` (everything, privately) and `/narrate`; `/dm ai` hands back to the AI.",
+            },
+            {
               name: "🐉 AI Dungeon Master",
               value: aiOn
                 ? "`/dm start` to begin a campaign in this channel, `/dm join` to bring your character, then `/act` to play.\nWhen the DM asks for a roll, click the button. `/dm ask` for out-of-character questions."

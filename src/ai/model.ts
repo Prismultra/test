@@ -64,6 +64,9 @@ export class AnthropicDmModel implements DmModel {
   }
 }
 
+/** The AI can't run any more today (free-tier daily limit, or out of API credit). */
+export class AiQuotaError extends UserError {}
+
 /** Turns Claude API failures into messages players can act on (shown in Discord). */
 export function describeClaudeError(err: unknown): unknown {
   if (err instanceof Anthropic.AuthenticationError) {
@@ -73,7 +76,7 @@ export function describeClaudeError(err: unknown): unknown {
   if (err instanceof Anthropic.APIError) {
     const msg = String(err.message ?? "");
     if (/credit balance|billing/i.test(msg)) {
-      return new UserError("The Anthropic account is out of API credit. The bot owner can add credit at platform.claude.com.");
+      return new AiQuotaError("The Anthropic account is out of API credit. The bot owner can add credit at platform.claude.com.");
     }
     console.error("Claude API error", err.status, msg);
     if (err.status === undefined || err.status >= 500) return new UserError("Claude is having trouble right now. Try again in a moment.");

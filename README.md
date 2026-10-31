@@ -15,6 +15,7 @@ It runs as a single serverless function (Discord's slash-command webhooks, no al
 | ⚔️ **Combat tracker** | `/init start` · `/init join` · `/init monster goblin count:4` (rolls HP + initiative) · ▶️ Next-turn buttons · `/init damage/heal/condition` · monster HP hidden from players by default · player HP stays in sync with sheets |
 | 📚 **SRD 5.1 lookups** | `/monster` (334 stat blocks) · `/spell info` (319 spells) · `/condition` · `/item` — all with autocomplete |
 | 🐉 **AI Dungeon Master** | `/dm start` · `/dm join` · `/act` · `/dm ask` · `/dm recap` · `/dm status` · `/dm end` |
+| 🧙 **Human Dungeon Master** | `/dm vote` · `/group-status` · `/narrate` · `/dm ai` |
 
 ### The AI Dungeon Master
 
@@ -35,6 +36,16 @@ Pick the AI that runs it (everything else works without either):
 | **Groq** (free) | `GROQ_API_KEY` from [console.groq.com](https://console.groq.com) | Free tier with daily and per-minute limits, so turns can be slow when busy, and open models follow the rules less reliably. Uses `openai/gpt-oss-120b` (switches automatically if Groq retires it); change with `GROQ_MODEL`. |
 
 If both keys are set, Claude is used (override with `DM_PROVIDER=groq`). `/dm status` shows which AI is running and the tokens a campaign has used.
+
+### When the AI is out: a human Dungeon Master
+
+If the AI hits its daily limit (or runs out of credit, or isn't set up), the bot opens a **🗳️ vote**: each party member clicks who should DM, a majority wins and ties go to a d20 roll-off. Nothing is lost: actions the AI didn't get to are saved for the new DM. The elected DM gets:
+
+- **`/group-status`** — a private view of everything: story summary, notes, scene and quest, every character's HP, AC, stats, attacks, slots and inventory, the combat order with exact monster HP and AC, and pending rolls
+- **`/narrate`** — posts narration (saved to the story, so the AI can pick up seamlessly later)
+- **`/dm ai`** — hands the seat back to the AI
+
+While a human runs the game, `/act` pings the DM. The party can also start a vote any time with `/dm vote`.
 
 ## Setup (about 15 minutes, all in the browser)
 

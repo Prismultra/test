@@ -19,13 +19,17 @@ import {
   requireCampaign,
   newId,
   takeLock,
+  isHumanRun,
   type Campaign,
   type PendingRoll,
   type QueuedAction,
   type TurnLock,
 } from "./campaign.js";
 import { askDm, compactIfNeeded, loadParty, resolvePendingRoll, runDmTurn, type DmDeps, type TurnResult } from "./dm.js";
-import { LENGTHS, TONES, type TurnTrigger } from "./prompt.js";
+import { LENGTHS, TONES, transcriptLine, type TurnTrigger } from "./prompt.js";
+import { AiQuotaError } from "./model.js";
+import { canManage } from "./human.js";
+import { electedReply, openVote } from "./vote.js";
 
 /** Extra queued turns one invocation will run before handing the queue to the next /act. */
 const MAX_DRAIN = 4;
@@ -42,17 +46,6 @@ function dmDeps(ctx: Ctx): DmDeps {
   const deps: DmDeps = { store: ctx.store, model, now: () => ctx.now() };
   if (ctx.rng) deps.rng = ctx.rng;
   return deps;
-}
-
-const MANAGE_GUILD = 1n << 5n;
-const ADMINISTRATOR = 1n << 3n;
-
-function canManage(ctx: Ctx, campaign: Campaign): boolean {
-  if (ctx.userId === campaign.createdBy) return true;
-  const perms = ctx.interaction.member?.permissions;
-  if (!perms) return false;
-  const bits = BigInt(perms);
-  return (bits & (MANAGE_GUILD | ADMINISTRATOR)) !== 0n;
 }
 
 function rollButton(r: PendingRoll): APIButtonComponentWithCustomId {
@@ -139,6 +132,11 @@ async function drainAndCompact(ctx: Ctx, deps: DmDeps, lock: TurnLock, started: 
         const result = await runDmTurn(deps, ctx.channelId, { kind: "turn", actions: queued }, lock.campaignId);
         if (result) await postFollowup(ctx, await narrationReply(ctx, result, quote(queued)));
       } catch (err) {
+        if (err instanceof AiQuotaError) {
+          await releaseTurn(deps.store, ctx.channelId, lock, deps.now());
+          await postFollowup(ctx, await quotaVote(ctx, err, queued));
+          break;
+        }
         if (!(err instanceof UserError)) console.error("queued DM turn failed", err);
         const why = err instanceof UserError ? err.message : "The DM lost their train of thought.";
         const what = quote(queued);
@@ -162,11 +160,23 @@ function deferredTurn(ctx: Ctx, deps: DmDeps, trigger: TurnTrigger, header: stri
       reply = result ? await narrationReply(ctx, result, header) : { content: header || "…" };
     } catch (err) {
       await releaseTurn(deps.store, ctx.channelId, lock, deps.now());
+      if (err instanceof AiQuotaError) return quotaVote(ctx, err, trigger.kind === "turn" ? trigger.actions : [], header);
       throw err;
     }
     // Runs even if posting the reply fails, so the lock is always released.
     reply.after = () => drainAndCompact(ctx, deps, lock, started);
     return reply;
+  });
+}
+
+/** The AI is out for the day: save what it didn't get to and let the party vote for a human DM. */
+function quotaVote(ctx: Ctx, err: AiQuotaError, actions: QueuedAction[], header = ""): Promise<Reply> {
+  return openVote(ctx.store, ctx.channelId, {
+    reason: `${err.message} A player can run the game until it's back.`,
+    requestedBy: { userId: ctx.userId, userName: ctx.userName },
+    pendingActions: actions,
+    now: ctx.now(),
+    header: [header, `😴 ${err.message}`].filter(Boolean).join("\n"),
   });
 }
 
@@ -189,10 +199,22 @@ async function ensureMember(ctx: Ctx, campaign: Campaign) {
   return result;
 }
 
+/** Records a player's action for a human DM (or while a vote is open) and pings the DM. */
+async function actForHuman(ctx: Ctx, action: QueuedAction): Promise<Reply> {
+  const { campaign } = await editCampaign(
+    ctx.store,
+    ctx.channelId,
+    (c) => void c.transcript.push({ id: newId(), kind: "player", author: `${action.userName} as ${action.characterName}`, text: action.text, at: action.at }),
+    ctx.now(),
+  );
+  if (campaign.vote) return { content: `${quote([action])}\n-# 🗳️ The party is voting for a DM — your action is saved for them.` };
+  const dm = campaign.humanDm!;
+  return { content: `${quote([action])}\n-# 🧙 <@${dm.userId}>, your call, Dungeon Master!`, mentionUsers: [dm.userId] };
+}
+
 export const actCommand: CommandModule = {
   names: ["act"],
   async run(ctx) {
-    const deps = dmDeps(ctx);
     const text = ctx.requireString("action");
     const campaign = await requireCampaign(ctx.store, ctx.channelId);
     const member = await ensureMember(ctx, campaign);
@@ -203,6 +225,16 @@ export const actCommand: CommandModule = {
       text,
       at: ctx.now().toISOString(),
     };
+    if (isHumanRun(campaign) || campaign.vote) return actForHuman(ctx, action);
+    if (!ctx.deps.dm) {
+      return openVote(ctx.store, ctx.channelId, {
+        reason: "There's no AI Dungeon Master on this bot, so a player runs the game.",
+        requestedBy: { userId: ctx.userId, userName: ctx.userName },
+        pendingActions: [action],
+        now: ctx.now(),
+      });
+    }
+    const deps = dmDeps(ctx);
     const lock = await acquireTurn(ctx.store, ctx.channelId, action, ctx.now());
     if (!lock.acquired) {
       return { content: `${quote([action])}\n-# ⏳ The DM is mid-scene — your action is queued (#${lock.position}).` };
@@ -212,7 +244,6 @@ export const actCommand: CommandModule = {
 };
 
 async function start(ctx: Ctx): Promise<Reply | ReturnType<typeof defer>> {
-  const deps = dmDeps(ctx);
   const existing = await getCampaign(ctx.store, ctx.channelId);
   if (existing) {
     throw new UserError(`A campaign${existing.title ? ` (**${existing.title}**)` : ""} is already running here. Use \`/dm end\` first, or start one in another channel.`);
@@ -228,6 +259,18 @@ async function start(ctx: Ctx): Promise<Reply | ReturnType<typeof defer>> {
   });
   const c = await getActive(ctx.store, ctx.guildId, ctx.userId);
   if (c) campaign.party.push({ userId: ctx.userId, userName: ctx.userName, characterId: c.id, characterName: c.name });
+  if (!ctx.deps.dm) {
+    // No AI on this bot: the person starting it runs the game (the party can vote later with /dm vote).
+    campaign.mode = "human";
+    campaign.humanDm = { userId: ctx.userId, userName: ctx.userName, since: ctx.now().toISOString() };
+    if ((await ctx.store.put(keys.campaign(ctx.channelId), campaign, "create")) === undefined) {
+      throw new UserError("A campaign was just started here.");
+    }
+    const reply = electedReply(campaign);
+    reply.content = `📜 **A new adventure begins!** There's no AI DM on this bot, so <@${ctx.userId}> runs it.`;
+    return reply;
+  }
+  const deps = dmDeps(ctx);
   const lock = takeLock(campaign, ctx.now());
   if ((await ctx.store.put(keys.campaign(ctx.channelId), campaign, "create")) === undefined) {
     throw new UserError("A campaign was just started here.");
@@ -294,6 +337,11 @@ async function status(ctx: Ctx): Promise<Reply> {
     { name: "Scene", value: c.scene ?? "—", inline: true },
     { name: "Quest", value: c.quest ?? "—", inline: true },
     { name: "Tone", value: TONES[c.tone]?.split(":")[0] ?? c.tone, inline: true },
+    {
+      name: "Dungeon Master",
+      value: isHumanRun(c) ? `🧙 ${c.humanDm!.userName}` : c.vote ? "🗳️ Vote in progress" : `🐉 AI${ctx.deps.dm ? "" : " (not set up — `/dm vote`)"}`,
+      inline: true,
+    },
   ];
   if (waiting.length) fields.push({ name: "Waiting on rolls", value: waiting.join("\n") });
   if (c.queue.length) fields.push({ name: "Queued actions", value: String(c.queue.length) });
@@ -341,10 +389,49 @@ export const dmCommand: CommandModule = {
         return status(ctx);
       case "end":
         return end(ctx);
+      case "vote": {
+        const c = await requireCampaign(ctx.store, ctx.channelId);
+        if (!c.party.some((p) => p.userId === ctx.userId) && !canManage(ctx, c)) throw new UserError("Join the party with `/dm join` first.");
+        return openVote(ctx.store, ctx.channelId, {
+          reason: isHumanRun(c) ? `Pick a new Dungeon Master to take over from ${c.humanDm!.userName}.` : "Pick a player to run the game instead of the AI.",
+          requestedBy: { userId: ctx.userId, userName: ctx.userName },
+          now: ctx.now(),
+        });
+      }
+      case "ai": {
+        const c = await requireCampaign(ctx.store, ctx.channelId);
+        if (!ctx.deps.dm) throw new UserError("There's no AI Dungeon Master on this bot. The bot owner can add `ANTHROPIC_API_KEY` or a free `GROQ_API_KEY`.");
+        if (!isHumanRun(c) && !c.vote) throw new UserError("The AI is already running this campaign.");
+        if (!(isHumanRun(c) && c.humanDm!.userId === ctx.userId) && !canManage(ctx, c)) {
+          throw new UserError("Only the current Dungeon Master (or whoever started the campaign) can hand the game back to the AI.");
+        }
+        await editCampaign(
+          ctx.store,
+          ctx.channelId,
+          (cur) => {
+            const from = cur.humanDm?.userName;
+            cur.mode = "ai";
+            delete cur.humanDm;
+            delete cur.vote;
+            cur.transcript.push({ id: newId(), kind: "event", text: `The AI Dungeon Master took over${from ? ` from ${from}` : ""}.`, at: ctx.now().toISOString() });
+          },
+          ctx.now(),
+        );
+        return { content: "🐉 **The AI Dungeon Master is back!** It has the story so far — carry on with `/act`." };
+      }
       case "ask":
       case "recap": {
+        const c = await requireCampaign(ctx.store, ctx.channelId);
+        if (isHumanRun(c) || !ctx.deps.dm) {
+          if (ctx.subcommand === "ask") {
+            throw new UserError(isHumanRun(c) ? `Ask your Dungeon Master, <@${c.humanDm!.userId}>, directly!` : "There's no AI on this bot to ask.");
+          }
+          const recent = c.transcript.slice(-6).map((e) => truncate(transcriptLine(e), 300)).join("\n");
+          return {
+            embeds: [embed({ author: "📖 Previously…", description: [c.summary, recent].filter(Boolean).join("\n\n") || "_Nothing has happened yet._", color: COLORS.info })],
+          };
+        }
         const deps = dmDeps(ctx);
-        await requireCampaign(ctx.store, ctx.channelId);
         const question =
           ctx.subcommand === "recap"
             ? "Give the players an exciting recap of the story so far in under 150 words, ending with where things stand now."
@@ -391,6 +478,8 @@ export const dmButtons: ComponentModule = {
     const after = async () => {
       await postFollowup(ctx, rollMessage);
       if (!outcome.batchDone || !ctx.deps.dm) return;
+      const current = await getCampaign(ctx.store, ctx.channelId);
+      if (!current || isHumanRun(current) || current.vote) return; // A human DM takes it from here.
       const deps = dmDeps(ctx);
       const started = Date.now();
       const wake: QueuedAction = {
@@ -415,6 +504,11 @@ export const dmButtons: ComponentModule = {
         const result = await runDmTurn(deps, ctx.channelId, { kind: "turn", actions: lock.actions }, lock.lock.campaignId);
         if (result) await postFollowup(ctx, await narrationReply(ctx, result, quote(lock.actions)));
       } catch (err) {
+        if (err instanceof AiQuotaError) {
+          await releaseTurn(deps.store, ctx.channelId, lock.lock, deps.now());
+          await postFollowup(ctx, await quotaVote(ctx, err, []));
+          return;
+        }
         if (!(err instanceof UserError)) console.error("DM turn after rolls failed", err);
         await postFollowup(ctx, { content: "⚠️ The DM fumbled their notes. Continue with `/act` and they'll pick it up." }).catch(() => undefined);
       }

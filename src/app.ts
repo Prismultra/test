@@ -21,6 +21,8 @@ import { inventoryCommand } from "./commands/inventory.js";
 import { initButtons, initCommand } from "./commands/init.js";
 import { helpCommand } from "./commands/help.js";
 import { actCommand, dmButtons, dmCommand } from "./ai/commands.js";
+import { groupStatusCommand, narrateCommand } from "./ai/human.js";
+import { voteButtons } from "./ai/vote.js";
 
 const COMMAND_MODULES: CommandModule[] = [
   rollCommand,
@@ -39,10 +41,12 @@ const COMMAND_MODULES: CommandModule[] = [
   initCommand,
   actCommand,
   dmCommand,
+  groupStatusCommand,
+  narrateCommand,
   helpCommand,
 ];
 
-const COMPONENT_MODULES: ComponentModule[] = [initButtons, monsterPages, dmButtons];
+const COMPONENT_MODULES: ComponentModule[] = [initButtons, monsterPages, dmButtons, voteButtons];
 
 const commands = new Map(COMMAND_MODULES.flatMap((m) => m.names.map((n) => [n, m] as const)));
 const components = new Map(COMPONENT_MODULES.map((m) => [m.prefix, m]));

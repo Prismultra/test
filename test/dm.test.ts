@@ -21,11 +21,14 @@ async function setup(model: ScriptedModel, rng = fixedRng(15)) {
 }
 
 describe("AI Dungeon Master", () => {
-  it("is disabled cleanly without an API key", async () => {
+  it("starts a human-run campaign when there's no AI", async () => {
     const env = makeDeps();
     const res = await run(env.deps, command(ALEX, "dm", sub("start")));
     expect(res.type).toBe(MESSAGE);
-    expect(res.data.content).toContain("ANTHROPIC_API_KEY");
+    expect(res.data.content).toContain("no AI DM on this bot");
+    const c = (await env.deps.store.get<Campaign>(keys.campaign("chan1")))!.value;
+    expect(c.mode).toBe("human");
+    expect(c.humanDm?.userId).toBe(ALEX.id);
   });
 
   it("opens a campaign, asks for rolls with buttons and continues after the roll", async () => {
