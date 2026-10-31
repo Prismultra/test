@@ -32,7 +32,7 @@ Pick the AI that runs it (everything else works without either):
 | | Set | Notes |
 |---|---|---|
 | **Claude** (best) | `ANTHROPIC_API_KEY` from [platform.claude.com](https://platform.claude.com) | Billed per use to your Anthropic API account (separate from a Claude.ai plan). Uses `claude-opus-5-5`; set `DM_MODEL=claude-haiku-5-5` for a much cheaper DM. |
-| **Groq** (free) | `GROQ_API_KEY` from [console.groq.com](https://console.groq.com) | Free tier with daily and per-minute limits, so turns can be slow when busy, and open models follow the rules less reliably. Uses `llama-3.3-70b-versatile`; change with `GROQ_MODEL`. |
+| **Groq** (free) | `GROQ_API_KEY` from [console.groq.com](https://console.groq.com) | Free tier with daily and per-minute limits, so turns can be slow when busy, and open models follow the rules less reliably. Uses `openai/gpt-oss-120b` (switches automatically if Groq retires it); change with `GROQ_MODEL`. |
 
 If both keys are set, Claude is used (override with `DM_PROVIDER=groq`). `/dm status` shows which AI is running and the tokens a campaign has used.
 

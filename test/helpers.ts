@@ -78,7 +78,7 @@ export function makeDeps(opts: { dm?: DmModel; rng?: Rng; store?: Deps["store"] 
       discordAppId: "app",
       dmModel: "claude-opus-5-5",
       dmEffort: "medium",
-      groqModel: "llama-3.3-70b-versatile",
+      groqModel: "openai/gpt-oss-120b",
       dmProvider: "auto",
     },
     store: opts.store ?? new MemoryStore(),

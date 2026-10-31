@@ -27,7 +27,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     discordPublicKey: required("DISCORD_PUBLIC_KEY"),
     discordAppId: required("DISCORD_APPLICATION_ID"),
     dmModel: optional("DM_MODEL") ?? "claude-opus-5-5",
-    groqModel: optional("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
+    groqModel: optional("GROQ_MODEL") ?? "openai/gpt-oss-120b",
     dmProvider: (["anthropic", "groq"] as const).find((p) => p === optional("DM_PROVIDER")?.toLowerCase()) ?? "auto",
     dmEffort: (EFFORTS as readonly string[]).includes(effort) ? (effort as Config["dmEffort"]) : "medium",
   };

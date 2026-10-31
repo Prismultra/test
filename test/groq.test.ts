@@ -14,7 +14,7 @@ interface Call {
 function fakeGroq(responses: (() => Response)[]) {
   const calls: Call[] = [];
   const fetchImpl = (async (url: string, init: RequestInit) => {
-    calls.push({ url, body: JSON.parse(String(init.body)), headers: init.headers as Record<string, string> });
+    calls.push({ url, body: init.body ? JSON.parse(String(init.body)) : undefined, headers: init.headers as Record<string, string> });
     const next = responses.shift();
     if (!next) throw new Error("fake Groq ran out of responses");
     return next();
@@ -155,8 +155,29 @@ describe("GroqDmModel", () => {
   it("passes Groq's error message through", async () => {
     const g = fakeGroq([() => new Response(JSON.stringify({ error: { message: "property 'foo' is unsupported" } }), { status: 400 })]);
     await expect(new GroqDmModel("k", "m", g.fetchImpl, async () => {}).create(req)).rejects.toThrow("Groq couldn't respond (400): property 'foo' is unsupported");
-    const g2 = fakeGroq([() => new Response(JSON.stringify({ error: { message: "model not found" } }), { status: 404 })]);
+    // Unknown model and no known replacement on the key's model list.
+    const notFound = () => new Response(JSON.stringify({ error: { message: "The model `m` does not exist", code: "model_not_found" } }), { status: 404 });
+    const g2 = fakeGroq([notFound, () => Response.json({ data: [{ id: "whisper-large-v3" }] })]);
     await expect(new GroqDmModel("k", "m", g2.fetchImpl, async () => {}).create(req)).rejects.toThrow(/GROQ_MODEL/);
+  });
+
+  it("switches to an available model when the configured one is retired", async () => {
+    const notFound = () =>
+      new Response(JSON.stringify({ error: { message: "The model `llama-3.3-70b-versatile` does not exist or you do not have access to it.", code: "model_not_found" } }), {
+        status: 404,
+      });
+    const models = () => Response.json({ data: [{ id: "whisper-large-v3" }, { id: "openai/gpt-oss-120b", active: true }, { id: "llama-3.1-8b-instant" }] });
+    const g = fakeGroq([notFound, models, completion({ content: "Back in business." })]);
+    const model = new GroqDmModel("k", "llama-3.3-70b-versatile", g.fetchImpl, async () => {});
+    const res = await model.create(req);
+    expect(res.content[0]).toMatchObject({ text: "Back in business." });
+    expect(model.label).toBe("Groq (openai/gpt-oss-120b)");
+    expect(g.calls.map((c) => c.url)).toEqual([
+      "https://api.groq.com/openai/v1/chat/completions",
+      "https://api.groq.com/openai/v1/models",
+      "https://api.groq.com/openai/v1/chat/completions",
+    ]);
+    expect(g.calls[2]!.body).toMatchObject({ model: "openai/gpt-oss-120b", reasoning_effort: "medium", max_completion_tokens: 2048 });
   });
 
   it("explains a bad key", async () => {
@@ -169,10 +190,10 @@ describe("provider selection", () => {
   const base = { DISCORD_PUBLIC_KEY: "00".repeat(32), DISCORD_APPLICATION_ID: "1" };
   it("prefers Claude, falls back to Groq, and respects DM_PROVIDER", () => {
     expect(createDmModel(loadConfig(base))).toBeUndefined();
-    expect(createDmModel(loadConfig({ ...base, GROQ_API_KEY: "g" }))?.label).toBe("Groq (llama-3.3-70b-versatile)");
+    expect(createDmModel(loadConfig({ ...base, GROQ_API_KEY: "g" }))?.label).toBe("Groq (openai/gpt-oss-120b)");
     expect(createDmModel(loadConfig({ ...base, GROQ_API_KEY: "g", ANTHROPIC_API_KEY: "a" }))?.label).toBe("Claude (claude-opus-5-5)");
-    expect(createDmModel(loadConfig({ ...base, GROQ_API_KEY: "g", ANTHROPIC_API_KEY: "a", DM_PROVIDER: "groq", GROQ_MODEL: "openai/gpt-oss-120b" }))?.label).toBe(
-      "Groq (openai/gpt-oss-120b)",
+    expect(createDmModel(loadConfig({ ...base, GROQ_API_KEY: "g", ANTHROPIC_API_KEY: "a", DM_PROVIDER: "groq", GROQ_MODEL: "llama-3.1-8b-instant" }))?.label).toBe(
+      "Groq (llama-3.1-8b-instant)",
     );
   });
 });
