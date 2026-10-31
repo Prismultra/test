@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { Config } from "../config.js";
+import { UserError } from "../discord/ui.js";
 
 export type BetaMessage = Anthropic.Beta.BetaMessage;
 export type BetaMessageParam = Anthropic.Beta.BetaMessageParam;
@@ -39,7 +40,15 @@ export class AnthropicDmModel implements DmModel {
     this.label = `Claude (${model})`;
   }
 
-  create(req: ModelRequest): Promise<BetaMessage> {
+  async create(req: ModelRequest): Promise<BetaMessage> {
+    try {
+      return await this.request(req);
+    } catch (err) {
+      throw describeClaudeError(err);
+    }
+  }
+
+  private request(req: ModelRequest): Promise<BetaMessage> {
     return this.client.beta.messages.create({
       model: this.model,
       max_tokens: req.maxTokens ?? 16000,
@@ -53,4 +62,22 @@ export class AnthropicDmModel implements DmModel {
       ...(req.tools?.length ? { tools: req.tools } : {}),
     });
   }
+}
+
+/** Turns Claude API failures into messages players can act on (shown in Discord). */
+export function describeClaudeError(err: unknown): unknown {
+  if (err instanceof Anthropic.AuthenticationError) {
+    return new UserError("The Anthropic API key was rejected. The bot owner should check `ANTHROPIC_API_KEY`.");
+  }
+  if (err instanceof Anthropic.RateLimitError) return new UserError("Claude is rate-limited right now. Try again in a minute.");
+  if (err instanceof Anthropic.APIError) {
+    const msg = String(err.message ?? "");
+    if (/credit balance|billing/i.test(msg)) {
+      return new UserError("The Anthropic account is out of API credit. The bot owner can add credit at platform.claude.com.");
+    }
+    console.error("Claude API error", err.status, msg);
+    if (err.status === undefined || err.status >= 500) return new UserError("Claude is having trouble right now. Try again in a moment.");
+    return new UserError(`Claude couldn't respond (${err.status}): ${msg.slice(0, 160)}`);
+  }
+  return err;
 }

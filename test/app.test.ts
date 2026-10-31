@@ -252,8 +252,8 @@ describe("slow responses", () => {
     const res = await run(deps, command(ALEX, "char", sub("sheet")));
     expect(res.type).toBe(DEFERRED);
     await flush();
-    // The reply is an ephemeral error, so the public "thinking" message is swapped for a private one.
-    expect(discord.calls.map((c) => c.kind)).toEqual(["delete", "followup"]);
-    expect(discord.calls[1]!.body!.content).toContain("/char create");
+    // Errors replace the public "thinking" message in place.
+    expect(discord.calls.map((c) => c.kind)).toEqual(["edit"]);
+    expect(discord.calls[0]!.body!.content).toContain("/char create");
   }, 10_000);
 });

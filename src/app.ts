@@ -178,8 +178,9 @@ async function deliver(ctx: Ctx, reply: Reply, kind: Kind, deferredEphemeral: bo
       } else {
         await discord.followup(ctx.token, data);
       }
-    } else if (reply.ephemeral && !deferredEphemeral) {
-      // The "thinking..." message was public; replace it with a private one.
+    } else if (reply.ephemeral && !deferredEphemeral && !reply.isError) {
+      // The "thinking..." message was public; replace it with a private one. (Errors
+      // just replace the thinking message, so the channel doesn't get a dangling reply.)
       await discord.deleteOriginal(ctx.token).catch(() => undefined);
       await discord.followup(ctx.token, data);
     } else {

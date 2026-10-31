@@ -109,7 +109,7 @@ describe("GroqDmModel", () => {
     expect(call.body).toMatchObject({
       model: "llama-3.3-70b-versatile",
       tool_choice: "auto",
-      max_completion_tokens: 4096,
+      max_completion_tokens: 1024,
       tools: [{ type: "function", function: { name: "next_turn", description: "Advance", parameters: { type: "object", properties: {} } } }],
     });
     expect(call.body.reasoning_effort).toBeUndefined();
@@ -139,6 +139,24 @@ describe("GroqDmModel", () => {
     const res = await new GroqDmModel("k", "m", g.fetchImpl, async () => {}).create(req);
     expect(res.content[0]).toMatchObject({ text: "The story goes on." });
     expect(g.calls.map((c) => c.body.tool_choice)).toEqual(["auto", "auto", "none"]);
+  });
+
+  it("shrinks the reply budget when a request is too large for the free tier", async () => {
+    const tooBig = () => new Response(JSON.stringify({ error: { message: "Request too large ... tokens per minute (TPM): Limit 6000, Requested 6994" } }), { status: 413 });
+    const g = fakeGroq([tooBig, completion({ content: "Fits now." })]);
+    const res = await new GroqDmModel("k", "llama-3.3-70b-versatile", g.fetchImpl, async () => {}).create(req);
+    expect(res.content[0]).toMatchObject({ text: "Fits now." });
+    expect(g.calls.map((c) => c.body.max_completion_tokens)).toEqual([1024, 512]);
+
+    const g2 = fakeGroq([tooBig, tooBig]);
+    await expect(new GroqDmModel("k", "llama-3.3-70b-versatile", g2.fetchImpl, async () => {}).create(req)).rejects.toThrow(/too big for Groq's free tier/);
+  });
+
+  it("passes Groq's error message through", async () => {
+    const g = fakeGroq([() => new Response(JSON.stringify({ error: { message: "property 'foo' is unsupported" } }), { status: 400 })]);
+    await expect(new GroqDmModel("k", "m", g.fetchImpl, async () => {}).create(req)).rejects.toThrow("Groq couldn't respond (400): property 'foo' is unsupported");
+    const g2 = fakeGroq([() => new Response(JSON.stringify({ error: { message: "model not found" } }), { status: 404 })]);
+    await expect(new GroqDmModel("k", "m", g2.fetchImpl, async () => {}).create(req)).rejects.toThrow(/GROQ_MODEL/);
   });
 
   it("explains a bad key", async () => {

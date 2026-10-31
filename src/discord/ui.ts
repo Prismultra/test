@@ -35,6 +35,8 @@ export interface Reply {
   after?: () => Promise<void>;
   /** Users this message may ping. Nobody is pinged otherwise. */
   mentionUsers?: string[];
+  /** An error message (ephemeral when it can be). */
+  isError?: boolean;
 }
 
 /** An error shown to the user as-is (ephemeral). */
@@ -122,7 +124,7 @@ export function row(...components: APIButtonComponentWithCustomId[]): ActionRow 
   return { type: ComponentType.ActionRow, components: components.slice(0, 5) };
 }
 
-export const errorReply = (message: string): Reply => ({ content: `❌ ${message}`, ephemeral: true });
+export const errorReply = (message: string): Reply => ({ content: `❌ ${message}`, ephemeral: true, isError: true });
 
 export const textReply = (content: string, ephemeral = false): Reply => ({ content, ephemeral });
 

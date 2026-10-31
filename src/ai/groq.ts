@@ -10,7 +10,13 @@ const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 /** Longest total time one call will spend waiting out rate limits. */
 const MAX_RATE_LIMIT_WAIT_MS = 65_000;
 const REQUEST_TIMEOUT_MS = 60_000;
-const MAX_COMPLETION_TOKENS = 4096;
+/**
+ * Groq counts the reply budget against the per-minute token limit (6-8K on the
+ * free tier), so keep it small. Narration is a few hundred tokens; reasoning
+ * models need room to think as well.
+ */
+const completionTokens = (model: string) => (model.includes("gpt-oss") || /qwen|minimax|muse/.test(model) ? 2048 : 1024);
+const MIN_COMPLETION_TOKENS = 512;
 
 interface ToolCall {
   id: string;
@@ -147,6 +153,16 @@ function reasoningParams(model: string, effort: Config["dmEffort"] | undefined):
   return {};
 }
 
+function errorMessage(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    if (parsed.error?.message) return parsed.error.message;
+  } catch {
+    // not JSON
+  }
+  return body.slice(0, 300);
+}
+
 function retryAfterMs(header: string | null): number {
   const secs = Number(header);
   return Number.isFinite(secs) && secs > 0 ? Math.ceil(secs * 1000) : 5000;
@@ -170,7 +186,7 @@ export class GroqDmModel implements DmModel {
     const body: Record<string, unknown> = {
       model: this.model,
       messages: toChatMessages(req),
-      max_completion_tokens: Math.min(req.maxTokens ?? MAX_COMPLETION_TOKENS, MAX_COMPLETION_TOKENS),
+      max_completion_tokens: Math.min(req.maxTokens ?? Infinity, completionTokens(this.model)),
       ...reasoningParams(this.model, req.effort),
     };
     if (req.tools?.length) {
@@ -197,12 +213,19 @@ export class GroqDmModel implements DmModel {
 
   private async post(body: Record<string, unknown>, budget: { waitedMs: number }): Promise<ChatResponse> {
     for (let attempt = 0; ; attempt++) {
-      const res = await this.fetchImpl(ENDPOINT, {
-        method: "POST",
-        headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
+      let res: Response;
+      try {
+        res = await this.fetchImpl(ENDPOINT, {
+          method: "POST",
+          headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch (err) {
+        if (attempt < 1) continue;
+        console.error("Groq request failed", err);
+        throw new UserError("Couldn't reach Groq (the free AI). Try again in a moment.");
+      }
       if (res.ok) return (await res.json()) as ChatResponse;
 
       if (res.status === 429) {
@@ -214,13 +237,29 @@ export class GroqDmModel implements DmModel {
         continue;
       }
       const text = await res.text().catch(() => "");
+      const message = errorMessage(text);
       if (res.status === 400 && text.includes("tool_use_failed")) throw new ToolCallFailed();
+      if (res.status === 413) {
+        // "Request too large ... tokens per minute": the prompt plus reply budget exceeds the limit.
+        const current = Number(body.max_completion_tokens);
+        if (current > MIN_COMPLETION_TOKENS) {
+          body.max_completion_tokens = Math.max(MIN_COMPLETION_TOKENS, Math.floor(current / 2));
+          continue;
+        }
+        console.error("Groq request too large", message);
+        throw new UserError(
+          "That turn is too big for Groq's free tier (its per-minute token limit). Try again in a minute, or switch `GROQ_MODEL` to one with a higher limit.",
+        );
+      }
       if (res.status >= 500 && attempt < 2) {
         await this.sleep(1000 * (attempt + 1));
         continue;
       }
-      if (res.status === 401) throw new UserError("The Groq API key was rejected. Check `GROQ_API_KEY` in the bot's settings.");
-      throw new Error(`Groq ${res.status}: ${text.slice(0, 300)}`);
+      console.error("Groq error", res.status, message);
+      if (res.status === 401) throw new UserError("The Groq API key was rejected. The bot owner should check `GROQ_API_KEY`.");
+      if (res.status === 404) throw new UserError(`Groq doesn't know that model. The bot owner should check \`GROQ_MODEL\` (${message.slice(0, 120)}).`);
+      if (res.status >= 500) throw new UserError("Groq (the free AI) is having trouble right now. Try again in a moment.");
+      throw new UserError(`Groq couldn't respond (${res.status}): ${message.slice(0, 160)}`);
     }
   }
 }

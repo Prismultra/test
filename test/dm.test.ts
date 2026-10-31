@@ -178,8 +178,8 @@ describe("AI Dungeon Master", () => {
     await run(env.deps, command(ALEX, "dm", sub("start")));
     await env.flush();
     const calls = env.discord.calls.map((c) => c.kind);
-    expect(calls).toEqual(["delete", "followup"]);
-    expect(env.discord.calls[1]!.body!.content).toContain("Something went wrong");
+    expect(calls).toEqual(["edit"]);
+    expect(env.discord.calls[0]!.body!.content).toContain("Something went wrong");
     expect((await campaignOf(env))!.lock).toBeUndefined();
   });
 
