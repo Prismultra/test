@@ -3,13 +3,15 @@
 import type { Character } from "../game/character.js";
 import { coinsText, hpBar, passivePerception, saveBonus, skillBonus, spellSaveDc } from "../game/character.js";
 import { current, renderOrder } from "../game/combat.js";
-import { ABILITIES, SKILLS, abilityMod, signed } from "../game/rules.js";
-import { COLORS, UserError, chunkText, embed, truncate, type Reply } from "../discord/ui.js";
+import { ABILITIES, ABILITY_NAMES, SKILLS, SKILL_KEYS, abilityMod, parseAbility, parseSkill, signed } from "../game/rules.js";
+import type { RollMode } from "../game/dice.js";
+import { ButtonStyle, COLORS, UserError, button, chunkText, embed, row, truncate, type Reply } from "../discord/ui.js";
 import type { Ctx } from "../discord/context.js";
 import { getCombat } from "../commands/combat-store.js";
-import type { CommandModule } from "../commands/registry.js";
+import { choice, type Choice, type CommandModule } from "../commands/registry.js";
 import { slotsText } from "../commands/views.js";
-import { editCampaign, isHumanRun, newId, requireCampaign, type Campaign } from "./campaign.js";
+import { editCampaign, getCampaign, isHumanRun, newId, requireCampaign, type Campaign, type PendingRoll, type RollKind } from "./campaign.js";
+import { keys } from "../store/store.js";
 import { loadParty } from "./dm.js";
 import { transcriptLine } from "./prompt.js";
 
@@ -157,5 +159,86 @@ export const narrateCommand: CommandModule = {
       reply.mentionUsers = players;
     }
     return reply;
+  },
+};
+
+/** Parses a check option: a skill, an ability, "save:dex" or "attack:Longsword". */
+function parseCheck(value: string, c: Character): { kind: RollKind; key: string; label: string } {
+  const v = value.trim();
+  if (v.toLowerCase().startsWith("save:")) {
+    const a = parseAbility(v.slice(5));
+    if (a) return { kind: "save", key: a, label: `${ABILITY_NAMES[a]} save` };
+  }
+  if (v.toLowerCase().startsWith("attack:")) {
+    const name = v.slice(7).trim().toLowerCase();
+    const atk = c.attacks.find((a) => a.name.toLowerCase() === name) ?? c.attacks.find((a) => a.name.toLowerCase().startsWith(name));
+    if (!atk) throw new UserError(`${c.name} has no attack called "${v.slice(7).trim()}".`);
+    return { kind: "attack", key: atk.name, label: `${atk.name} attack` };
+  }
+  const skill = parseSkill(v);
+  if (skill) return { kind: "skill", key: skill, label: SKILLS[skill].name };
+  const ability = parseAbility(v.replace(/\s*check$/i, ""));
+  if (ability) return { kind: "ability", key: ability, label: `${ABILITY_NAMES[ability]} check` };
+  throw new UserError(`"${v}" isn't a skill, ability, save or attack. Pick one from the list.`);
+}
+
+export const requestRollCommand: CommandModule = {
+  names: ["request-roll"],
+  async run(ctx) {
+    const c = await requireCampaign(ctx.store, ctx.channelId);
+    const isDm = isHumanRun(c) && c.humanDm!.userId === ctx.userId;
+    if (!isDm) {
+      throw new UserError(
+        isHumanRun(c)
+          ? `Only the Dungeon Master (<@${c.humanDm!.userId}>) can ask for rolls.`
+          : "The AI is running this campaign and asks for rolls itself. Start a vote for a human DM with `/dm vote`.",
+      );
+    }
+    const playerId = ctx.requireString("player");
+    const member = c.party.find((p) => p.userId === playerId);
+    if (!member) throw new UserError("That player isn't in the party. They can join with `/dm join`.");
+    const sheet = await ctx.store.get<Character>(keys.character(c.guildId, member.userId, member.characterId));
+    if (!sheet) throw new UserError(`${member.characterName}'s sheet is gone.`);
+    const check = parseCheck(ctx.requireString("check"), sheet.value);
+    const modeOpt = ctx.string("mode");
+    const mode: RollMode = modeOpt === "advantage" || modeOpt === "disadvantage" ? modeOpt : "normal";
+    const reason = ctx.string("reason")?.trim() ?? "";
+    const roll: PendingRoll = {
+      id: newId(),
+      batch: newId(),
+      userId: member.userId,
+      characterId: member.characterId,
+      characterName: member.characterName,
+      ...check,
+      mode,
+      reason,
+    };
+    const dc = ctx.integer("dc");
+    if (dc !== undefined) roll.dc = dc;
+    await editCampaign(ctx.store, ctx.channelId, (cur) => void cur.pendingRolls.push(roll), ctx.now());
+
+    const modeNote = mode === "normal" ? "" : ` with **${mode}**`;
+    return {
+      content: `🎲 <@${member.userId}>, roll **${check.label}** for **${member.characterName}**${modeNote}!${reason ? `\n> ${reason}` : ""}`,
+      components: [row(button(`dm:roll:${roll.id}`, `${member.characterName}: ${check.label}`, ButtonStyle.Primary, "🎲"))],
+      mentionUsers: [member.userId],
+    };
+  },
+  async autocomplete(ctx) {
+    const q = (ctx.focused?.value ?? "").toLowerCase();
+    const options: Choice[] = [
+      ...SKILL_KEYS.map((k) => choice(`${SKILLS[k].name} (${SKILLS[k].ability.toUpperCase()})`, k)),
+      ...ABILITIES.map((a) => choice(`${ABILITY_NAMES[a]} check`, a)),
+      ...ABILITIES.map((a) => choice(`${ABILITY_NAMES[a]} saving throw`, `save:${a}`)),
+    ];
+    // If the player is already picked, offer their attacks too.
+    const playerId = ctx.string("player");
+    const c = playerId ? await getCampaign(ctx.store, ctx.channelId) : undefined;
+    const member = c?.party.find((p) => p.userId === playerId);
+    if (c && member) {
+      const sheet = await ctx.store.get<Character>(keys.character(c.guildId, member.userId, member.characterId));
+      for (const a of sheet?.value.attacks ?? []) options.unshift(choice(`${a.name} attack (${signed(a.toHit)})`, `attack:${a.name}`));
+    }
+    return options.filter((o) => o.name.toLowerCase().includes(q)).slice(0, 25);
   },
 };

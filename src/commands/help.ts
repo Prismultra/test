@@ -30,7 +30,7 @@ export const helpCommand: CommandModule = {
             {
               name: "🧙 Human Dungeon Master",
               value:
-                "If the AI runs out for the day (or isn't set up), the party votes for a DM with `/dm vote`. The DM gets `/group-status` (everything, privately) and `/narrate`; `/dm ai` hands back to the AI.",
+                "If the AI runs out for the day (or isn't set up), the party votes for a DM with `/dm vote`. The DM gets `/group-status` (everything, privately), `/narrate` and `/request-roll`; `/dm ai` hands back to the AI.",
             },
             {
               name: "🐉 AI Dungeon Master",

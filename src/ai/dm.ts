@@ -236,7 +236,8 @@ export async function resolvePendingRoll(
   const pending = campaign.pendingRolls.find((r) => r.id === rollId);
   if (!pending) throw new UserError("That roll isn't needed anymore — the story has moved on.");
   if (pending.result) throw new UserError(`${pending.characterName} already rolled that.`);
-  if (clickerId !== pending.userId && clickerId !== campaign.createdBy) {
+  const isDm = campaign.mode === "human" && campaign.humanDm?.userId === clickerId;
+  if (clickerId !== pending.userId && clickerId !== campaign.createdBy && !isDm) {
     throw new UserError(`This roll is for **${pending.characterName}**.`);
   }
   const charEntry = await deps.store.get<Character>(keys.character(campaign.guildId, pending.userId, pending.characterId));

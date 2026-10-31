@@ -155,6 +155,50 @@ describe("the human DM's tools", () => {
     expect(ask.data.content).toContain("Ask your Dungeon Master");
   });
 
+  it("/request-roll gives the player a button that uses their sheet", async () => {
+    const env = await humanGame();
+    await run(env.deps, command(SAM, "char", sub("prof", { name: "athletics" })));
+    const ask = await run(env.deps, command(ALEX, "request-roll", opts({ player: SAM.id, check: "athletics", dc: 12, reason: "Climb the mill wall" })));
+    expect(ask.data.content).toContain(`<@${SAM.id}>, roll **Athletics** for **Bran**`);
+    expect(ask.data.content).toContain("Climb the mill wall");
+    expect(ask.data.allowed_mentions.users).toEqual([SAM.id]);
+    const btn = ask.data.components[0].components[0];
+    expect(btn.custom_id).toMatch(/^dm:roll:/);
+
+    expect((await run(env.deps, command(SAM, "request-roll", opts({ player: ALEX.id, check: "stealth" })))).data.content).toContain(
+      "Only the Dungeon Master",
+    );
+    expect((await run(env.deps, click({ id: "999", name: "Lurker" }, btn.custom_id))).data.content).toContain("This roll is for **Bran**");
+
+    const before = env.discord.calls.length;
+    const rolled = await run(env.deps, click(SAM, btn.custom_id));
+    expect(rolled.type).toBe(UPDATE);
+    // fixedRng(10): d20 10 + Athletics (STR 10, proficient +2) = 12 vs DC 12
+    expect(rolled.data.components[0].components[0].label).toBe("Bran: Athletics → 12");
+    await env.flush();
+    const result = env.discord.calls.slice(before).find((c) => c.kind === "followup")!.body!;
+    expect(result.embeds![0]!.description).toContain("Success");
+    // No AI turn while a human runs the game.
+    expect((env.deps.dm as ScriptedModel).requests).toHaveLength(1);
+    const status = await run(env.deps, command(ALEX, "group-status"));
+    await env.flush();
+    expect(env.discord.text()).toContain("Bran — Athletics (Climb the mill wall): 12");
+    expect(status.data.flags).toBe(EPHEMERAL);
+  });
+
+  it("autocompletes checks, including the chosen player's attacks", async () => {
+    const env = await humanGame();
+    await run(env.deps, command(SAM, "char", sub("attack-add", { name: "Longsword" })));
+    const res = await run(env.deps, {
+      ...command(ALEX, "request-roll", [
+        { type: 6, name: "player", value: SAM.id },
+        { type: 3, name: "check", value: "long", focused: true },
+      ]),
+      type: 4,
+    } as any);
+    expect(res.data.choices[0]).toEqual({ name: "Longsword attack (+2)", value: "attack:Longsword" });
+  });
+
   it("hands back to the AI, which picks up the story", async () => {
     const env = await humanGame();
     const model = env.deps.dm as ScriptedModel;

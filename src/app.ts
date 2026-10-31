@@ -21,7 +21,7 @@ import { inventoryCommand } from "./commands/inventory.js";
 import { initButtons, initCommand } from "./commands/init.js";
 import { helpCommand } from "./commands/help.js";
 import { actCommand, dmButtons, dmCommand } from "./ai/commands.js";
-import { groupStatusCommand, narrateCommand } from "./ai/human.js";
+import { groupStatusCommand, narrateCommand, requestRollCommand } from "./ai/human.js";
 import { voteButtons } from "./ai/vote.js";
 
 const COMMAND_MODULES: CommandModule[] = [
@@ -43,6 +43,7 @@ const COMMAND_MODULES: CommandModule[] = [
   dmCommand,
   groupStatusCommand,
   narrateCommand,
+  requestRollCommand,
   helpCommand,
 ];
 

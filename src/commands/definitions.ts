@@ -288,6 +288,14 @@ export const COMMANDS: RESTPostAPIChatInputApplicationCommandsJSONBody[] = [
 
   command("group-status", "DM only: the whole picture — story, notes, every sheet, combat (only you see it)"),
 
+  command("request-roll", "DM only: ask a player to roll (they get a button; their sheet's bonuses apply)", [
+    userOpt("player", "Who rolls", REQUIRED),
+    str("check", "Skill, ability, saving throw or attack", { ...REQUIRED, ...AUTO }),
+    int("dc", "Difficulty (hidden from the player; they see success or failure)", { min_value: 1, max_value: 40 }),
+    mode(),
+    str("reason", "What it's for, e.g. sneaking past the guard", { max_length: 200 }),
+  ]),
+
   command("narrate", "DM only: tell the story (saved so the AI can pick up later)", [
     str("text", "What happens", { ...REQUIRED, max_length: 4000 }),
     str("scene", "Set the current scene or location", { max_length: 200 }),
