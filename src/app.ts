@@ -52,7 +52,11 @@ export const SOFT_DEADLINE_MS = 2200;
 
 export async function handleRequest(req: Request, deps: Deps): Promise<Response> {
   if (req.method === "GET") {
-    return new Response("Tavernkeep is running. Set this URL as your Discord Interactions Endpoint URL.", { status: 200 });
+    const version = process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) ?? "dev";
+    const ai = deps.dm?.label ?? "off";
+    return new Response(`Tavernkeep is running (version ${version}, AI DM: ${ai}). Set this URL as your Discord Interactions Endpoint URL.`, {
+      status: 200,
+    });
   }
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const raw = await req.text();
